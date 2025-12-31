@@ -1,0 +1,9 @@
+**/*.ts
+**/*.map
+**/.eslint*
+**/tsconfig.json
+**/node_modules/**
+**/.vscode/**
+**/.git/**
+**/npm-debug.log
+

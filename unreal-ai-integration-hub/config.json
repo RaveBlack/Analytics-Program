@@ -1,0 +1,8 @@
+{
+  "backendUrl": "http://localhost:5000",
+  "pendingPromptsFolder": "/UnrealBridge/pending_prompts",
+  "defaultPluginOutputFolder": "GeneratedUnrealPlugins",
+  "defaultBlueprintPatchOutputFolder": "GeneratedBlueprintPatches",
+  "upsSchemaPath": "unreal_templates/ups/ups.schema.json"
+}
+

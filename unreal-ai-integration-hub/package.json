@@ -1,0 +1,127 @@
+{
+  "name": "unreal-ai-integration-hub",
+  "displayName": "Unreal AI Integration Hub",
+  "description": "A VS Code control hub for Unreal Engine AI integration (UPS prompt submission, pending queue, results, plugin skeletons, blueprint patch templates).",
+  "version": "0.1.0",
+  "publisher": "local",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:unrealAiHub.submitUpsPrompt",
+    "onCommand:unrealAiHub.viewPendingPrompts",
+    "onCommand:unrealAiHub.fetchBuildResult",
+    "onCommand:unrealAiHub.generatePluginSkeleton",
+    "onCommand:unrealAiHub.newBlueprintPatchTemplate",
+    "onView:unrealAiHub.sidebar"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "unrealAiHub.submitUpsPrompt",
+        "title": "Unreal AI Hub: Submit UPS Prompt"
+      },
+      {
+        "command": "unrealAiHub.viewPendingPrompts",
+        "title": "Unreal AI Hub: View Pending Prompts"
+      },
+      {
+        "command": "unrealAiHub.fetchBuildResult",
+        "title": "Unreal AI Hub: Fetch Build Result"
+      },
+      {
+        "command": "unrealAiHub.generatePluginSkeleton",
+        "title": "Unreal AI Hub: Generate Plugin Skeleton"
+      },
+      {
+        "command": "unrealAiHub.newBlueprintPatchTemplate",
+        "title": "Unreal AI Hub: New Blueprint Patch Template"
+      },
+      {
+        "command": "unrealAiHub.refreshSidebar",
+        "title": "Unreal AI Hub: Refresh Sidebar"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "unrealAiHub.container",
+          "title": "Unreal AI Hub",
+          "icon": "resources/unreal-ai-hub.svg"
+        }
+      ]
+    },
+    "views": {
+      "unrealAiHub.container": [
+        {
+          "id": "unrealAiHub.sidebar",
+          "name": "Control Hub"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "unrealAiHub.refreshSidebar",
+          "when": "view == unrealAiHub.sidebar",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "unrealAiHub.fetchBuildResult",
+          "when": "view == unrealAiHub.sidebar && viewItem == pendingPrompt",
+          "group": "inline"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Unreal AI Integration Hub",
+      "properties": {
+        "unrealAiHub.backendUrl": {
+          "type": "string",
+          "default": "http://localhost:5000",
+          "description": "Backend base URL (no trailing slash)."
+        },
+        "unrealAiHub.pendingPromptsFolder": {
+          "type": "string",
+          "default": "/UnrealBridge/pending_prompts",
+          "description": "Absolute folder path to watch for new UPS JSON files."
+        },
+        "unrealAiHub.templatesFolder": {
+          "type": "string",
+          "default": "unreal_templates",
+          "description": "Templates folder path, relative to the extension install folder."
+        },
+        "unrealAiHub.upsSchemaPath": {
+          "type": "string",
+          "default": "unreal_templates/ups/ups.schema.json",
+          "description": "UPS JSON schema path (relative to extension install folder)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "lint": "eslint .",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^8.17.0",
+    "@typescript-eslint/parser": "^8.17.0",
+    "eslint": "^9.17.0",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1"
+  }
+}
+
