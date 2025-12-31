@@ -17,7 +17,7 @@ from .auth import (
     verify_password,
 )
 from .database import Database, DatabaseConfig
-from .hashing import HashingConfig, sha256_hex, visitor_key_hex
+from .hashing import HashingConfig, protected_value, visitor_protected
 from .pixel import glyph_png, transparent_pixel_png
 
 
@@ -54,7 +54,10 @@ def create_app() -> Flask:
             return p
         return os.path.abspath(os.path.join(cfg_dir, p))
 
-    hashing_cfg = HashingConfig(salt=str(cfg["security"]["hashing_salt"]))
+    hashing_cfg = HashingConfig(
+        salt=str(cfg["security"]["hashing_salt"]),
+        identifiable_mode=str(cfg.get("privacy", {}).get("identifiable_mode", "hash")),
+    )
     auth_cfg = AuthConfig(auth_secret=str(cfg["security"]["auth_secret"]))
     db = Database(DatabaseConfig(sqlite_path=resolve_from_cfg_dir(str(cfg["database"]["sqlite_path"]))))
     trust_proxy_headers = bool(cfg.get("privacy", {}).get("trust_proxy_headers", False))
@@ -85,13 +88,23 @@ def create_app() -> Flask:
         # Ensure pixel exists, then record hashed hit.
         db.ensure_pixel(pixel_id=pixel_id)
         ts = int(time.time())
+        tag_raw, tag_hash = protected_value(hashing_cfg, label="tag", value=tag)
+        ip_raw, ip_hash = protected_value(hashing_cfg, label="ip", value=ip)
+        ua_raw, ua_hash = protected_value(hashing_cfg, label="ua", value=ua)
+        ref_raw, ref_hash = protected_value(hashing_cfg, label="ref", value=ref)
+        visitor_raw, visitor_hash = visitor_protected(hashing_cfg, ip=ip, user_agent=ua)
         db.insert_hit(
             pixel_id=pixel_id,
-            tag_hash=sha256_hex(hashing_cfg, label="tag", value=tag),
-            ip_hash=sha256_hex(hashing_cfg, label="ip", value=ip),
-            ua_hash=sha256_hex(hashing_cfg, label="ua", value=ua),
-            ref_hash=sha256_hex(hashing_cfg, label="ref", value=ref),
-            visitor_hash=visitor_key_hex(hashing_cfg, ip=ip, user_agent=ua),
+            tag_raw=tag_raw,
+            tag_hash=tag_hash,
+            ip_raw=ip_raw,
+            ip_hash=ip_hash,
+            ua_raw=ua_raw,
+            ua_hash=ua_hash,
+            ref_raw=ref_raw,
+            ref_hash=ref_hash,
+            visitor_raw=visitor_raw,
+            visitor_hash=visitor_hash,
             ts=ts,
         )
 
@@ -120,13 +133,23 @@ def create_app() -> Flask:
 
         db.ensure_pixel(pixel_id=pixel_id)
         ts = int(time.time())
+        tag_raw, tag_hash = protected_value(hashing_cfg, label="tag", value=tag)
+        ip_raw, ip_hash = protected_value(hashing_cfg, label="ip", value=ip)
+        ua_raw, ua_hash = protected_value(hashing_cfg, label="ua", value=ua)
+        ref_raw, ref_hash = protected_value(hashing_cfg, label="ref", value=ref)
+        visitor_raw, visitor_hash = visitor_protected(hashing_cfg, ip=ip, user_agent=ua)
         db.insert_hit(
             pixel_id=pixel_id,
-            tag_hash=sha256_hex(hashing_cfg, label="tag", value=tag),
-            ip_hash=sha256_hex(hashing_cfg, label="ip", value=ip),
-            ua_hash=sha256_hex(hashing_cfg, label="ua", value=ua),
-            ref_hash=sha256_hex(hashing_cfg, label="ref", value=ref),
-            visitor_hash=visitor_key_hex(hashing_cfg, ip=ip, user_agent=ua),
+            tag_raw=tag_raw,
+            tag_hash=tag_hash,
+            ip_raw=ip_raw,
+            ip_hash=ip_hash,
+            ua_raw=ua_raw,
+            ua_hash=ua_hash,
+            ref_raw=ref_raw,
+            ref_hash=ref_hash,
+            visitor_raw=visitor_raw,
+            visitor_hash=visitor_hash,
             ts=ts,
         )
 

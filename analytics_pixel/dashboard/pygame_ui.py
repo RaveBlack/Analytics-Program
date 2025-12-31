@@ -132,25 +132,29 @@ def run_dashboard() -> None:
     summary: Dict[str, Any] = {"total_hits": 0, "unique_visitors": 0, "pixel_count": 0}
     pixels: List[Dict[str, Any]] = []
     series: List[Dict[str, Any]] = []
+    events: List[Dict[str, Any]] = []
     selected_pixel_id: Optional[str] = None
     selected_embed: Optional[Dict[str, str]] = None
 
     scroll = 0
 
     def refresh() -> None:
-        nonlocal summary, pixels, series, selected_embed
+        nonlocal summary, pixels, series, events, selected_embed
         if not state.token:
             return
         try:
             s = _api_get(state, "/api/stats/summary")
             p = _api_get(state, "/api/stats/pixels")
             t = _api_get(state, "/api/stats/timeseries?bucket=hour&hours=48")
+            e = _api_get(state, "/api/events/recent?limit=30")
             if s["status"] == 200:
                 summary = s["json"]
             if p["status"] == 200:
                 pixels = p["json"].get("pixels", [])
             if t["status"] == 200:
                 series = t["json"].get("series", [])
+            if e["status"] == 200:
+                events = e["json"].get("events", [])
             state.last_refresh = time.time()
             state.message = "Refreshed."
             # keep embed info if selection still exists
@@ -272,7 +276,7 @@ def run_dashboard() -> None:
 
         # Title bar
         screen.blit(_text(font_big, "Analytics Pixel (privacy-first, local)"), (30, 20))
-        screen.blit(_text(font_small, "No raw IP/User-Agent/Referrer stored — only salted one-way hashes.", Theme.MUTED), (30, 110))
+        screen.blit(_text(font_small, "Identifiable mode may store/display raw IP/UA/Referrer (see config.yaml).", Theme.MUTED), (30, 110))
 
         # Login row
         inp_url.draw(screen, font, "Server URL")
@@ -378,6 +382,19 @@ def run_dashboard() -> None:
                 pygame.draw.rect(screen, Theme.BORDER, r, width=1, border_radius=10)
                 screen.blit(_text(font_small, f"Copy {label}", Theme.TEXT), (r.x + 12, r.y + 8))
                 screen.blit(_text(font_small, hint, Theme.MUTED), (r.x + 240, r.y + 8))
+
+        # Recent hits (shows identifiable data if stored)
+        recent = pygame.Rect(610, 430, 560, 0)  # just a label line above panel
+        screen.blit(_text(font, "Recent hits (raw if available)", Theme.TEXT), (610 + 14, 420))
+        y = 448
+        for ev in events[:6]:
+            pid = str(ev.get("pixel_id", ""))
+            ip = ev.get("ip_raw") or (str(ev.get("ip_hash", ""))[:10] + "…")
+            ua = ev.get("ua_raw") or (str(ev.get("ua_hash", ""))[:10] + "…")
+            ref = ev.get("ref_raw") or (str(ev.get("ref_hash", ""))[:10] + "…")
+            line = f"{pid}  IP={ip}  UA={str(ua)[:28]}  REF={str(ref)[:28]}"
+            screen.blit(_text(font_small, line, Theme.MUTED), (610 + 14, y))
+            y += 16
 
         pygame.display.flip()
 

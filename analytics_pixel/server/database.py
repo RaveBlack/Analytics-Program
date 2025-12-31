@@ -66,10 +66,15 @@ class Database:
                 CREATE TABLE IF NOT EXISTS hits (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
                   pixel_id TEXT NOT NULL,
+                  tag_raw TEXT,
                   tag_hash TEXT,
+                  ip_raw TEXT,
                   ip_hash TEXT,
+                  ua_raw TEXT,
                   ua_hash TEXT,
+                  ref_raw TEXT,
                   ref_hash TEXT,
+                  visitor_raw TEXT,
                   visitor_hash TEXT,
                   ts INTEGER NOT NULL,
                   FOREIGN KEY(pixel_id) REFERENCES pixels(pixel_id) ON DELETE CASCADE
@@ -80,6 +85,13 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_hits_visitor ON hits(visitor_hash);
                 """
             )
+            # Lightweight migrations for existing databases (older schema without *_raw columns).
+            for col in ("tag_raw", "ip_raw", "ua_raw", "ref_raw", "visitor_raw"):
+                try:
+                    conn.execute(f"ALTER TABLE hits ADD COLUMN {col} TEXT;")
+                except sqlite3.OperationalError:
+                    # column already exists
+                    pass
             conn.commit()
         finally:
             conn.close()
@@ -181,10 +193,15 @@ class Database:
         self,
         *,
         pixel_id: str,
+        tag_raw: Optional[str],
         tag_hash: Optional[str],
+        ip_raw: Optional[str],
         ip_hash: Optional[str],
+        ua_raw: Optional[str],
         ua_hash: Optional[str],
+        ref_raw: Optional[str],
         ref_hash: Optional[str],
+        visitor_raw: Optional[str],
         visitor_hash: Optional[str],
         ts: int,
     ) -> None:
@@ -192,10 +209,31 @@ class Database:
         try:
             conn.execute(
                 """
-                INSERT INTO hits(pixel_id, tag_hash, ip_hash, ua_hash, ref_hash, visitor_hash, ts)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO hits(
+                  pixel_id,
+                  tag_raw, tag_hash,
+                  ip_raw, ip_hash,
+                  ua_raw, ua_hash,
+                  ref_raw, ref_hash,
+                  visitor_raw, visitor_hash,
+                  ts
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (pixel_id, tag_hash, ip_hash, ua_hash, ref_hash, visitor_hash, ts),
+                (
+                    pixel_id,
+                    tag_raw,
+                    tag_hash,
+                    ip_raw,
+                    ip_hash,
+                    ua_raw,
+                    ua_hash,
+                    ref_raw,
+                    ref_hash,
+                    visitor_raw,
+                    visitor_hash,
+                    ts,
+                ),
             )
             conn.commit()
         finally:
@@ -207,7 +245,14 @@ class Database:
             return list(
                 conn.execute(
                     """
-                    SELECT id, pixel_id, tag_hash, ip_hash, ua_hash, ref_hash, visitor_hash, ts
+                    SELECT
+                      id, pixel_id,
+                      tag_raw, tag_hash,
+                      ip_raw, ip_hash,
+                      ua_raw, ua_hash,
+                      ref_raw, ref_hash,
+                      visitor_raw, visitor_hash,
+                      ts
                     FROM hits
                     ORDER BY ts DESC
                     LIMIT ?

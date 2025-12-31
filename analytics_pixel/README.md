@@ -5,6 +5,9 @@ You run the server locally, embed pixels anywhere an external image is allowed (
 
 ## What gets stored (and what doesn’t)
 
+This project supports a configurable mode to **display identifiable data**:
+- `privacy.identifiable_mode: "hash" | "plaintext" | "both"` in `config.yaml`
+
 - **Stored**
   - **Timestamp** (unix seconds)
   - **Pixel ID**
@@ -14,10 +17,10 @@ You run the server locally, embed pixels anywhere an external image is allowed (
     - Referrer → SHA-256 + salt
     - Optional tag/campaign → SHA-256 + salt
     - “Unique visitor” key → SHA-256 of (IP + UA) + salt
+- **When `identifiable_mode: "plaintext"` or `"both"`**
+  - The server will also store and the dashboard will display **raw** IP / User-Agent / Referrer / tag.
+
 - **Never stored**
-  - Raw IPs
-  - Raw User-Agent strings
-  - Raw Referrers
   - Plaintext passwords
 
 ## Install
