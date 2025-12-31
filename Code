@@ -1,0 +1,715 @@
+<#
+.SYNOPSIS
+  Creates the Unreal-AI-Pipeline repository scaffold (files & folders), initializes git,
+  creates a GitHub repository under RaveBlack using gh, and pushes the initial commit.
+
+USAGE
+  1. Open PowerShell (Windows).
+  2. Optionally allow script execution for this session:
+     Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+  3. Run the script from the folder where you want the repo created:
+     .\create_and_publish.ps1
+
+PREREQUISITES
+  - git installed and on PATH
+  - GitHub CLI (gh) installed and authenticated (run `gh auth login` beforehand)
+  - You want the repo created under GitHub user: RaveBlack
+
+NOTES
+  - The script will create files and directories in the current directory.
+  - If a GitHub repo named RaveBlack/Unreal-AI-Pipeline already exists, gh repo create will fail.
+    In that case either delete/rename the existing repo or create the remote manually and push.
+#>
+
+[CmdletBinding()]
+param(
+  [switch]$Private
+)
+
+$ErrorActionPreference = 'Stop'
+
+$GITHUB_USER   = "RaveBlack"
+$REPO_NAME     = "Unreal-AI-Pipeline"
+$REPO_DESC     = "VS Code extension + Node backend scaffold connecting AI prompts to Unreal Engine (UPS)"
+$LICENSE_YEAR  = "2025"
+$AUTHOR_NAME   = "RaveBlack"
+
+function Assert-CommandExists {
+    param([string]$Cmd)
+    if (-not (Get-Command $Cmd -ErrorAction SilentlyContinue)) {
+        Write-Error "'$Cmd' is not installed or not on PATH. Please install it and re-run."
+        exit 1
+    }
+}
+
+function Write-File {
+    param([string]$Path, [string]$Content)
+    $dir = Split-Path $Path -Parent
+    if ($dir -and -not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    # ensure utf8 without BOM
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Content)
+    [System.IO.File]::WriteAllBytes($Path, $bytes)
+    Write-Host "Wrote $Path"
+}
+
+# Check prerequisites
+Assert-CommandExists -Cmd 'git'
+Assert-CommandExists -Cmd 'gh'
+
+# Check gh authentication
+try {
+    gh auth status 2>$null | Out-Null
+} catch {
+    Write-Error "GitHub CLI 'gh' is not authenticated. Run 'gh auth login' and re-run this script."
+    exit 1
+}
+
+Write-Host "Creating Unreal-AI-Pipeline scaffold..." -ForegroundColor Cyan
+
+# Root files
+Write-File -Path ".gitignore" -Content @'
+# Node
+node_modules/
+dist/
+out/
+build/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# VS Code
+.vscode/
+.history/
+
+# TypeScript
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Env
+.env
+'@
+
+Write-File -Path "README.md" -Content @"
+# Unreal-AI-Pipeline
+
+Unreal-AI-Pipeline is a starter scaffold to integrate AI-driven prompt workflows with Unreal Engine plugin generation and blueprint patching.
+
+Summary
+- VS Code extension (TypeScript) to submit Universal Prompt Schema (UPS) prompts, view pending prompts, and fetch results
+- Local Node (Express) backend scaffold implementing minimal UPS REST endpoints
+- Unreal plugin skeleton (.uplugin) template and blueprint patch JSON template
+- Folder watcher utilities, generators, and example usage docs
+
+Quick start
+1. Install dependencies
+   - npm install
+
+2. Build TypeScript
+   - npm run build
+
+3. Run local backend (after build)
+   - npm run backend:dev
+
+4. Run the extension in VS Code
+   - Open the repository in VS Code
+   - Press F5 (Launch Extension Development Host)
+
+Configuration
+- Edit `config.json` to point `backendUrl` to your running backend and adjust output directories.
+
+See docs/ for more details.
+"@
+
+Write-File -Path "LICENSE" -Content @"
+MIT License
+
+Copyright (c) $LICENSE_YEAR $AUTHOR_NAME
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the ""Software""), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+"@
+
+Write-File -Path "package.json" -Content @'
+{
+  "name": "unreal-ai-pipeline",
+  "displayName": "Unreal AI Pipeline",
+  "publisher": "RaveBlack",
+  "version": "0.0.1",
+  "description": "VS Code extension + backend scaffold to integrate AI prompts (UPS) with Unreal Engine plugin skeletons and blueprint patches.",
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "main": "./dist/extension.js",
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "backend:dev": "node ./dist/backend/app.js",
+    "clean": "rimraf dist",
+    "prepack": "npm run build"
+  },
+  "keywords": [
+    "vscode",
+    "unreal",
+    "ai",
+    "pipeline",
+    "ups"
+  ],
+  "author": "RaveBlack <you@example.com>",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.4.0",
+    "chokidar": "^3.5.3",
+    "express": "^4.18.2",
+    "ajv": "^8.12.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/chokidar": "^2.1.8",
+    "@types/express": "^4.17.17",
+    "@types/node": "^18.15.11",
+    "@types/uuid": "^9.0.1",
+    "rimraf": "^3.0.2",
+    "typescript": "^5.1.3"
+  }
+}
+'@
+
+Write-File -Path "tsconfig.json" -Content @'
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "CommonJS",
+    "lib": ["ES2020", "DOM"],
+    "outDir": "dist",
+    "rootDir": ".",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "sourceMap": true
+  },
+  "include": [
+    "extension/**/*",
+    "backend/**/*",
+    "config.json"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
+}
+'@
+
+Write-File -Path "config.json" -Content @'
+{
+  "backendUrl": "http://localhost:3000/api",
+  "watchPaths": [
+    "./prompts",
+    "./unreal_templates"
+  ],
+  "unrealPluginOutputPath": "./generated_unreal_plugins",
+  "blueprintPatchOutputPath": "./generated_blueprint_patches"
+}
+'@
+
+# extension files
+Write-File -Path "extension/extension.ts" -Content @'
+// VS Code extension entrypoint (TypeScript)
+// Registers commands and starts the watcher.
+
+import * as vscode from "vscode";
+import { submitUPSCommand } from "./commands/submitUps";
+import { viewPendingCommand } from "./commands/viewPending";
+import { fetchResultsCommand } from "./commands/fetchResults";
+import { startWatcher } from "./utils/watcher";
+
+export function activate(context: vscode.ExtensionContext) {
+  console.log("Unreal-AI-Pipeline extension activated");
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("unreal-ai-pipeline.submitUps", submitUPSCommand),
+    vscode.commands.registerCommand("unreal-ai-pipeline.viewPending", viewPendingCommand),
+    vscode.commands.registerCommand("unreal-ai-pipeline.fetchResults", fetchResultsCommand)
+  );
+
+  startWatcher(context);
+}
+
+export function deactivate() {
+  console.log("Unreal-AI-Pipeline extension deactivated");
+}
+'@
+
+Write-File -Path "extension/commands/submitUps.ts" -Content @'
+import * as vscode from "vscode";
+import { postPrompt } from "../utils/api";
+import { showInfo } from "../utils/notifications";
+
+export async function submitUPSCommand() {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    vscode.window.showErrorMessage("Open a UPS JSON file to submit.");
+    return;
+  }
+  const text = editor.document.getText();
+  try {
+    const res = await postPrompt(text);
+    showInfo(`Prompt submitted: id=${res.id || "unknown"}`);
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to submit prompt: ${err.message || err}`);
+  }
+}
+'@
+
+Write-File -Path "extension/commands/viewPending.ts" -Content @'
+import * as vscode from "vscode";
+import { getPending } from "../utils/api";
+
+export async function viewPendingCommand() {
+  try {
+    const pending = await getPending();
+    const items = pending.map((p: any) => ({ label: `${p.id}`, description: `${p.status}`, detail: JSON.stringify(p.ups) }));
+    const pick = await vscode.window.showQuickPick(items, { placeHolder: "Pending prompts" });
+    if (pick) {
+      vscode.window.showInformationMessage(`Selected: ${pick.label}`);
+    }
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to fetch pending prompts: ${err.message || err}`);
+  }
+}
+'@
+
+Write-File -Path "extension/commands/fetchResults.ts" -Content @'
+import * as vscode from "vscode";
+import { getResult } from "../utils/api";
+
+export async function fetchResultsCommand() {
+  const id = await vscode.window.showInputBox({ prompt: "Enter prompt result id" });
+  if (!id) return;
+  try {
+    const result = await getResult(id);
+    const doc = await vscode.workspace.openTextDocument({ content: JSON.stringify(result, null, 2), language: "json" });
+    await vscode.window.showTextDocument(doc);
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to fetch result: ${err.message || err}`);
+  }
+}
+'@
+
+Write-File -Path "extension/generators/pluginGenerator.ts" -Content @'
+import * as fs from "fs";
+import * as path from "path";
+import * as vscode from "vscode";
+
+/**
+ * Generate a minimal .uplugin file from the template
+ */
+export async function generateUPlugin(outputDir: string, pluginName = "AIIntegrationPlugin") {
+  const templatePath = path.join(__dirname, "..", "..", "unreal_templates", "default_plugin.uplugin");
+  const raw = fs.readFileSync(templatePath, "utf-8");
+  const content = raw.replace(/__PLUGIN_NAME__/g, pluginName);
+  const outPath = path.join(outputDir, `${pluginName}.uplugin`);
+  fs.mkdirSync(outputDir, { recursive: true });
+  fs.writeFileSync(outPath, content, "utf-8");
+  vscode.window.showInformationMessage(`Generated plugin skeleton: ${outPath}`);
+  return outPath;
+}
+'@
+
+Write-File -Path "extension/generators/blueprintPatchGenerator.ts" -Content @'
+import * as fs from "fs";
+import * as path from "path";
+import * as vscode from "vscode";
+
+export async function generateBlueprintPatch(outputDir: string, data: { target?: string; changes?: any } = {}) {
+  const templatePath = path.join(__dirname, "..", "..", "unreal_templates", "blueprint_patch_template.json");
+  const raw = fs.readFileSync(templatePath, "utf-8");
+  const parsed = JSON.parse(raw);
+  if (data.target) parsed.target = data.target;
+  if (data.changes) parsed.changes = data.changes;
+  parsed.metadata.created_at = new Date().toISOString();
+  const outPath = path.join(outputDir, `blueprint_patch_${Date.now()}.json`);
+  fs.mkdirSync(outputDir, { recursive: true });
+  fs.writeFileSync(outPath, JSON.stringify(parsed, null, 2), "utf-8");
+  vscode.window.showInformationMessage(`Generated blueprint patch: ${outPath}`);
+  return outPath;
+}
+'@
+
+Write-File -Path "extension/utils/api.ts" -Content @'
+import axios from "axios";
+import * as fs from "fs";
+import * as path from "path";
+
+const configPath = path.join(__dirname, "..", "..", "config.json");
+
+function loadConfig() {
+  try {
+    const raw = fs.readFileSync(configPath, "utf-8");
+    return JSON.parse(raw);
+  } catch {
+    return { backendUrl: "http://localhost:3000/api" };
+  }
+}
+
+const config = loadConfig();
+const BASE = config.backendUrl.replace(/\/$/, "");
+
+export async function postPrompt(upsString: string) {
+  const obj = JSON.parse(upsString);
+  const res = await axios.post(`${BASE}/prompt/submit`, obj);
+  return res.data;
+}
+
+export async function getPending() {
+  const res = await axios.get(`${BASE}/prompt/pending`);
+  return res.data;
+}
+
+export async function getResult(id: string) {
+  const res = await axios.get(`${BASE}/prompt/results/${id}`);
+  return res.data;
+}
+'@
+
+Write-File -Path "extension/utils/watcher.ts" -Content @'
+import * as chokidar from "chokidar";
+import * as vscode from "vscode";
+import * as fs from "fs";
+import * as path from "path";
+import { postPrompt } from "./api";
+
+const configPath = path.join(__dirname, "..", "..", "config.json");
+
+function loadConfig() {
+  try {
+    const raw = fs.readFileSync(configPath, "utf-8");
+    return JSON.parse(raw);
+  } catch {
+    return { watchPaths: ["./prompts"] };
+  }
+}
+
+export function startWatcher(context: vscode.ExtensionContext) {
+  const config = loadConfig();
+  const watchPaths: string[] = config.watchPaths || ["./prompts"];
+
+  const watcher = chokidar.watch(watchPaths, {
+    ignored: /(^|[\/\\])\../,
+    persistent: true
+  });
+
+  watcher.on("add", async (filePath: string) => {
+    if (filePath.endsWith(".json")) {
+      try {
+        const text = fs.readFileSync(filePath, "utf-8");
+        await postPrompt(text);
+        vscode.window.showInformationMessage(`Submitted UPS from ${path.basename(filePath)}`);
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Watcher submit failed: ${err.message || err}`);
+      }
+    }
+  });
+
+  context.subscriptions.push({ dispose: () => watcher.close() });
+}
+'@
+
+Write-File -Path "extension/utils/notifications.ts" -Content @'
+import * as vscode from "vscode";
+
+export function showInfo(message: string) {
+  vscode.window.showInformationMessage(message);
+}
+
+export function showError(message: string) {
+  vscode.window.showErrorMessage(message);
+}
+'@
+
+# backend files
+Write-File -Path "backend/app.ts" -Content @'
+import express from "express";
+import bodyParser from "body-parser";
+import promptRoutes from "./routes/promptRoutes";
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.use(bodyParser.json());
+app.use("/api/prompt", promptRoutes);
+
+app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
+
+app.listen(port, () => {
+  console.log(`Unreal-AI-Pipeline backend listening at http://localhost:${port}/api`);
+});
+
+export default app;
+'@
+
+Write-File -Path "backend/routes/promptRoutes.ts" -Content @'
+import { Router } from "express";
+import { submitPrompt, getPending, getResult } from "../controllers/promptController";
+
+const router = Router();
+
+router.post("/submit", async (req, res) => {
+  try {
+    const id = await submitPrompt(req.body);
+    res.status(201).json({ id });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || String(err) });
+  }
+});
+
+router.get("/pending", async (_req, res) => {
+  const data = await getPending();
+  res.json(data);
+});
+
+router.get("/results/:id", async (req, res) => {
+  try {
+    const r = await getResult(req.params.id);
+    res.json(r);
+  } catch (err: any) {
+    res.status(404).json({ error: err.message || String(err) });
+  }
+});
+
+export default router;
+'@
+
+Write-File -Path "backend/controllers/promptController.ts" -Content @'
+import { v4 as uuidv4 } from "uuid";
+import { validateUPS } from "../models/upsValidator";
+
+type PromptRecord = {
+  id: string;
+  ups: any;
+  status: "pending" | "processing" | "done" | "failed";
+  result?: any;
+  createdAt: string;
+};
+
+const store = new Map<string, PromptRecord>();
+
+export async function submitPrompt(ups: any) {
+  const valid = validateUPS(ups);
+  if (!valid.valid) {
+    throw new Error(`UPS validation failed: ${valid.errors?.join(", ")}`);
+  }
+  const id = uuidv4();
+  store.set(id, { id, ups, status: "pending", createdAt: new Date().toISOString() });
+  // Hook: enqueue or trigger processing pipeline here.
+  return id;
+}
+
+export async function getPending() {
+  return Array.from(store.values()).filter(r => r.status === "pending");
+}
+
+export async function getResult(id: string) {
+  const r = store.get(id);
+  if (!r) throw new Error("Not found");
+  return r;
+}
+'@
+
+Write-File -Path "backend/models/upsValidator.ts" -Content @'
+import Ajv from "ajv";
+
+const ajv = new Ajv();
+
+const upsSchema = {
+  type: "object",
+  properties: {
+    version: { type: "string" },
+    prompt: { type: "string" },
+    metadata: { type: "object" }
+  },
+  required: ["version", "prompt"],
+  additionalProperties: true
+};
+
+const validate = ajv.compile(upsSchema);
+
+export function validateUPS(data: any) {
+  const valid = validate(data);
+  if (valid) {
+    return { valid: true };
+  } else {
+    return { valid: false, errors: (validate.errors || []).map(e => `${e.instancePath} ${e.message}`) };
+  }
+}
+'@
+
+# unreal templates
+Write-File -Path "unreal_templates/default_plugin.uplugin" -Content @'
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "1.0",
+  "FriendlyName": "__PLUGIN_NAME__",
+  "Description": "A minimal Unreal plugin generated by Unreal-AI-Pipeline.",
+  "Category": "AI",
+  "CreatedBy": "Unreal-AI-Pipeline",
+  "Modules": [
+    {
+      "Name": "__PLUGIN_NAME__",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ]
+}
+'@
+
+Write-File -Path "unreal_templates/blueprint_patch_template.json" -Content @'
+{
+  "patch_version": "1.0",
+  "target": "ReplaceWith/BlueprintPath",
+  "changes": [
+    {
+      "op": "set",
+      "path": "/Components/0/Properties/ExampleProperty",
+      "value": "NewValue"
+    }
+  ],
+  "metadata": {
+    "author": "unreal-ai-pipeline",
+    "created_at": "__TIMESTAMP__",
+    "notes": "Template for blueprint patching. Replace target and changes with actual values."
+  }
+}
+'@
+
+# docs
+Write-File -Path "docs/usage.md" -Content @'
+# Usage Guide
+
+Submit a prompt from VS Code
+- Open a UPS JSON file.
+- Command Palette -> "Unreal AI Pipeline: Submit UPS" (command id `unreal-ai-pipeline.submitUps`).
+
+View pending prompts
+- Command Palette -> "Unreal AI Pipeline: View Pending" (`unreal-ai-pipeline.viewPending`).
+
+Fetch result
+- Command Palette -> "Unreal AI Pipeline: Fetch Results" and provide the prompt id.
+
+Generate plugin skeleton
+- Call `generateUPlugin(outputDir, pluginName)` from generator code or wire it into a command.
+
+Generate blueprint patch
+- Call `generateBlueprintPatch(outputDir, { target, changes })` to produce patch JSONs.
+
+Folder watcher
+- Place UPS JSON files in a watched folder (see `config.json.watchPaths`). The watcher will submit new prompt files automatically.
+'@
+
+Write-File -Path "docs/api_reference.md" -Content @'
+# Backend API Reference
+
+Base path: /api/prompt
+
+- POST /submit
+  - Body: UPS JSON
+  - Response: { id: "<prompt-id>" }
+
+- GET /pending
+  - Response: Array of pending prompt records
+
+- GET /results/:id
+  - Response: Full prompt record (status, ups, result)
+
+Health
+- GET /api/health
+  - Response: { status: "ok" }
+'@
+
+Write-Host "" 
+Write-Host "Scaffold files created." -ForegroundColor Green
+
+# Initialize git repo if not already
+if (-not (Test-Path ".git")) {
+    Write-Host "Initializing git repository..." -ForegroundColor Cyan
+    git init
+} else {
+    Write-Host "Git repository already initialized." -ForegroundColor Yellow
+}
+
+# Create or switch to main branch
+$hasMain = git branch --list main
+if (-not [string]::IsNullOrEmpty($hasMain)) {
+    git checkout main
+} else {
+    git checkout -b main
+}
+
+# Stage & commit
+git add .
+# Try a commit; if nothing to commit, continue
+try {
+    git commit -m "chore: initial scaffold for $REPO_NAME (created by create_and_publish.ps1)"
+} catch {
+    Write-Host "No changes to commit or commit failed: $_" -ForegroundColor Yellow
+}
+
+# Create GitHub repo using gh and push
+Write-Host "Creating GitHub repo $GITHUB_USER/$REPO_NAME and pushing..." -ForegroundColor Cyan
+$visibility = if ($Private) { "--private" } else { "--public" }
+
+try {
+    gh repo create "$GITHUB_USER/$REPO_NAME" `
+      $visibility `
+      --source=. `
+      --remote=origin `
+      --description "$REPO_DESC" `
+      --license MIT `
+      --confirm `
+      --push
+} catch {
+    Write-Error "gh repo create failed: $_"
+    Write-Host ""
+    Write-Host "If the repository already exists on GitHub, add the remote manually and push:"
+    Write-Host "  git remote add origin git@github.com:$GITHUB_USER/$REPO_NAME.git"
+    Write-Host "  git push -u origin main"
+    exit 1
+}
+
+Write-Host ""
+Write-Host "Done. Repository created and pushed." -ForegroundColor Green
+Write-Host "URL: https://github.com/$GITHUB_USER/$REPO_NAME"
+Write-Host ""
+Write-Host "Next steps:"
+Write-Host "- Run: npm install"
+Write-Host "- Run: npm run build"
+Write-Host "- Open this folder in VS Code and press F5 to launch the Extension Development Host"
+Write-Host ""
