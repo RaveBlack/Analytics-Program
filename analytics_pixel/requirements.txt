@@ -1,0 +1,7 @@
+Flask==3.1.0
+PyYAML==6.0.2
+argon2-cffi==25.1.0
+requests==2.32.3
+pygame==2.6.1
+pillow==11.1.0
+pyperclip==1.9.0
