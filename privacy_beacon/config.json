@@ -1,0 +1,9 @@
+{
+  "host": "127.0.0.1",
+  "port": 8080,
+  "storage_path": "privacy_beacon/storage/beacon.db",
+  "public_base_url": "",
+  "store_full_urls": false,
+  "require_registered_beacons": false
+}
+
