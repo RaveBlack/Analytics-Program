@@ -54,9 +54,12 @@ def create_app() -> Flask:
             return p
         return os.path.abspath(os.path.join(cfg_dir, p))
 
+    mode = str(cfg.get("privacy", {}).get("identifiable_mode", "hash")).strip().lower()
+    if mode not in ("hash", "plaintext", "both"):
+        mode = "hash"
     hashing_cfg = HashingConfig(
         salt=str(cfg["security"]["hashing_salt"]),
-        identifiable_mode=str(cfg.get("privacy", {}).get("identifiable_mode", "hash")),
+        identifiable_mode=mode,  # type: ignore[arg-type]
     )
     auth_cfg = AuthConfig(auth_secret=str(cfg["security"]["auth_secret"]))
     db = Database(DatabaseConfig(sqlite_path=resolve_from_cfg_dir(str(cfg["database"]["sqlite_path"]))))

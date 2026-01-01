@@ -20,7 +20,7 @@ privacy:
   # - "hash": store only salted one-way hashes (privacy-first)
   # - "plaintext": store raw identifiable values (NOT privacy-first)
   # - "both": store raw + hashes (allows display + unique visitor analytics)
-  identifiable_mode: "both"
+  identifiable_mode: "hash"
 
 dashboard:
   refresh_seconds: 2.0
