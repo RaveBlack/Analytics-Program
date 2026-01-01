@@ -1,0 +1,21 @@
+server:
+  host: "127.0.0.1"
+  port: 5055
+
+database:
+  # SQLite path (default). You can later extend database.py for PostgreSQL.
+  sqlite_path: "./analytics.sqlite3"
+
+security:
+  # IMPORTANT: change these before production use.
+  # Used for one-way hashing of sensitive fields (IP, UA, referrer, tags).
+  hashing_salt: "CHANGE_ME__generate_a_random_32+_byte_string"
+  # Used for signing/deriving auth/session material.
+  auth_secret: "CHANGE_ME__another_random_32+_byte_string"
+
+privacy:
+  # If true, trust X-Forwarded-For. Keep false unless behind your own reverse proxy.
+  trust_proxy_headers: false
+
+dashboard:
+  refresh_seconds: 2.0
