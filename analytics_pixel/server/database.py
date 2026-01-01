@@ -269,7 +269,7 @@ class Database:
             total_hits = int(conn.execute("SELECT COUNT(1) AS c FROM hits").fetchone()["c"])
             unique_visitors = int(
                 conn.execute(
-                    "SELECT COUNT(DISTINCT visitor_hash) AS c FROM hits WHERE visitor_hash IS NOT NULL"
+                    "SELECT COUNT(DISTINCT COALESCE(visitor_hash, visitor_raw)) AS c FROM hits WHERE COALESCE(visitor_hash, visitor_raw) IS NOT NULL"
                 ).fetchone()["c"]
             )
             pixel_count = int(conn.execute("SELECT COUNT(1) AS c FROM pixels").fetchone()["c"])
@@ -286,7 +286,7 @@ class Database:
                     SELECT p.pixel_id,
                            COALESCE(p.label, '') AS label,
                            COUNT(h.id) AS hits,
-                           COUNT(DISTINCT h.visitor_hash) AS unique_visitors
+                           COUNT(DISTINCT COALESCE(h.visitor_hash, h.visitor_raw)) AS unique_visitors
                     FROM pixels p
                     LEFT JOIN hits h ON h.pixel_id = p.pixel_id
                     GROUP BY p.pixel_id
@@ -312,7 +312,7 @@ class Database:
                     f"""
                     SELECT (ts / {seconds}) * {seconds} AS t,
                            COUNT(1) AS hits,
-                           COUNT(DISTINCT visitor_hash) AS unique_visitors
+                           COUNT(DISTINCT COALESCE(visitor_hash, visitor_raw)) AS unique_visitors
                     FROM hits
                     WHERE ts >= ?
                     GROUP BY t

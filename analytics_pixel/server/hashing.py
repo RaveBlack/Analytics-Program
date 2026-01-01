@@ -8,8 +8,6 @@ from typing import Literal, Optional, Tuple
 @dataclass(frozen=True)
 class HashingConfig:
     salt: str
-    # See config.yaml privacy.identifiable_mode
-    identifiable_mode: Literal["hash", "plaintext", "both"] = "hash"
 
 
 def _to_bytes(s: str) -> bytes:
@@ -40,23 +38,6 @@ def sha256_hex(cfg: HashingConfig, *, label: str, value: Optional[str]) -> Optio
     return h.hexdigest()
 
 
-def protected_value(cfg: HashingConfig, *, label: str, value: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Returns (raw_value, hash_value) according to cfg.identifiable_mode.
-    """
-    if value is None:
-        return None, None
-    v = value.strip()
-    if not v:
-        return None, None
-
-    if cfg.identifiable_mode == "hash":
-        return None, sha256_hex(cfg, label=label, value=v)
-    if cfg.identifiable_mode == "plaintext":
-        return v, None
-    # both
-    return v, sha256_hex(cfg, label=label, value=v)
-
 
 def visitor_key_hex(cfg: HashingConfig, *, ip: Optional[str], user_agent: Optional[str]) -> Optional[str]:
     """
@@ -68,12 +49,8 @@ def visitor_key_hex(cfg: HashingConfig, *, ip: Optional[str], user_agent: Option
     return sha256_hex(cfg, label="visitor", value=combined)
 
 
-def visitor_protected(cfg: HashingConfig, *, ip: Optional[str], user_agent: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Returns (visitor_raw, visitor_hash).
-    visitor_raw is the combined (ip + newline + ua) string when identifiable_mode allows raw storage.
-    """
-    if (ip is None or not ip.strip()) and (user_agent is None or not user_agent.strip()):
-        return None, None
-    combined = f"{ip or ''}\n{user_agent or ''}"
-    return protected_value(cfg, label="visitor", value=combined)
+"""
+NOTE:
+This module is still used for *auth token hashing* (defense-in-depth).
+Analytics capture hashing has been removed per request.
+"""

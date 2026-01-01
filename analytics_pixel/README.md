@@ -1,24 +1,19 @@
-# Analytics Pixel (privacy-first, local control)
+# Analytics Pixel (local control)
 
-Classic tracking-pixel analytics — but **no third-party services** and **no plaintext identifiable data**.  
+Classic tracking-pixel analytics — but **no third-party services** and fully local control.  
 You run the server locally, embed pixels anywhere an external image is allowed (BBCode, HTML, emails), and view analytics in a local **Pygame** dashboard.
 
 ## What gets stored (and what doesn’t)
 
-This project supports a configurable mode to **display identifiable data**:
-- `privacy.identifiable_mode: "hash" | "plaintext" | "both"` in `config.yaml`
-
 - **Stored**
   - **Timestamp** (unix seconds)
   - **Pixel ID**
-  - **Hashed fields (salted, one-way)**:
-    - IP address → SHA-256 + salt
-    - User-Agent → SHA-256 + salt
-    - Referrer → SHA-256 + salt
-    - Optional tag/campaign → SHA-256 + salt
-    - “Unique visitor” key → SHA-256 of (IP + UA) + salt
-- **When `identifiable_mode: "plaintext"` or `"both"`**
-  - The server will also store and the dashboard will display **raw** IP / User-Agent / Referrer / tag.
+  - **Identifiable fields (stored as plaintext)**:
+    - IP address
+    - User-Agent
+    - Referrer
+    - Optional tag/campaign
+    - “Unique visitor” key is derived from (IP + UA)
 
 - **Never stored**
   - Plaintext passwords
@@ -41,7 +36,7 @@ Edit `config.yaml` and replace:
 - `security.hashing_salt`
 - `security.auth_secret`
 
-Use long random strings (32+ bytes). This salt is required for privacy-safe one-way hashing.
+Use long random strings (32+ bytes).
 
 ## Run the server
 
@@ -93,7 +88,7 @@ curl -sS -X POST http://127.0.0.1:5055/api/pixels/create \\
 [img]http://127.0.0.1:5055/p/forum_sig_001.png[/img]
 ```
 
-With a campaign/tag (still hashed):
+With a campaign/tag:
 
 ```text
 [img]http://127.0.0.1:5055/p/forum_sig_001.png?tag=summer_campaign[/img]
@@ -143,8 +138,7 @@ Features:
 - `GET /api/stats/pixels` — hits per pixel (auth required)
 - `GET /api/stats/timeseries?bucket=hour&hours=48` — time series (auth required)
 
-## Privacy model (why this is “one-way”)
+## Privacy note
 
-All sensitive fields are **salted** and hashed with SHA-256 *before disk write*.  
-Because the salt is not stored alongside raw values, hashes cannot be reversed into the original IP/UA/referrer.
+Hashing of analytics capture data has been removed: this system stores **raw identifiable request data** in SQLite.
 

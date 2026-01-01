@@ -17,7 +17,7 @@ from .auth import (
     verify_password,
 )
 from .database import Database, DatabaseConfig
-from .hashing import HashingConfig, protected_value, visitor_protected
+from .hashing import HashingConfig
 from .pixel import glyph_png, transparent_pixel_png
 
 
@@ -54,12 +54,8 @@ def create_app() -> Flask:
             return p
         return os.path.abspath(os.path.join(cfg_dir, p))
 
-    mode = str(cfg.get("privacy", {}).get("identifiable_mode", "hash")).strip().lower()
-    if mode not in ("hash", "plaintext", "both"):
-        mode = "hash"
     hashing_cfg = HashingConfig(
         salt=str(cfg["security"]["hashing_salt"]),
-        identifiable_mode=mode,  # type: ignore[arg-type]
     )
     auth_cfg = AuthConfig(auth_secret=str(cfg["security"]["auth_secret"]))
     db = Database(DatabaseConfig(sqlite_path=resolve_from_cfg_dir(str(cfg["database"]["sqlite_path"]))))
@@ -91,11 +87,12 @@ def create_app() -> Flask:
         # Ensure pixel exists, then record hashed hit.
         db.ensure_pixel(pixel_id=pixel_id)
         ts = int(time.time())
-        tag_raw, tag_hash = protected_value(hashing_cfg, label="tag", value=tag)
-        ip_raw, ip_hash = protected_value(hashing_cfg, label="ip", value=ip)
-        ua_raw, ua_hash = protected_value(hashing_cfg, label="ua", value=ua)
-        ref_raw, ref_hash = protected_value(hashing_cfg, label="ref", value=ref)
-        visitor_raw, visitor_hash = visitor_protected(hashing_cfg, ip=ip, user_agent=ua)
+        # Hashing removed: store identifiable values directly.
+        tag_raw, tag_hash = (tag, None)
+        ip_raw, ip_hash = (ip, None)
+        ua_raw, ua_hash = (ua, None)
+        ref_raw, ref_hash = (ref, None)
+        visitor_raw, visitor_hash = (f"{ip}\n{ua}", None)
         db.insert_hit(
             pixel_id=pixel_id,
             tag_raw=tag_raw,
@@ -136,11 +133,12 @@ def create_app() -> Flask:
 
         db.ensure_pixel(pixel_id=pixel_id)
         ts = int(time.time())
-        tag_raw, tag_hash = protected_value(hashing_cfg, label="tag", value=tag)
-        ip_raw, ip_hash = protected_value(hashing_cfg, label="ip", value=ip)
-        ua_raw, ua_hash = protected_value(hashing_cfg, label="ua", value=ua)
-        ref_raw, ref_hash = protected_value(hashing_cfg, label="ref", value=ref)
-        visitor_raw, visitor_hash = visitor_protected(hashing_cfg, ip=ip, user_agent=ua)
+        # Hashing removed: store identifiable values directly.
+        tag_raw, tag_hash = (tag, None)
+        ip_raw, ip_hash = (ip, None)
+        ua_raw, ua_hash = (ua, None)
+        ref_raw, ref_hash = (ref, None)
+        visitor_raw, visitor_hash = (f"{ip}\n{ua}", None)
         db.insert_hit(
             pixel_id=pixel_id,
             tag_raw=tag_raw,

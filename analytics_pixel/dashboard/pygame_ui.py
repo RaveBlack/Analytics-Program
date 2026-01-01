@@ -275,8 +275,8 @@ def run_dashboard() -> None:
         screen.fill(Theme.BG)
 
         # Title bar
-        screen.blit(_text(font_big, "Analytics Pixel (privacy-first, local)"), (30, 20))
-        screen.blit(_text(font_small, "Identifiable mode may store/display raw IP/UA/Referrer (see config.yaml).", Theme.MUTED), (30, 110))
+        screen.blit(_text(font_big, "Analytics Pixel (local)"), (30, 20))
+        screen.blit(_text(font_small, "Hashing removed: raw IP/UA/Referrer are stored and displayed.", Theme.MUTED), (30, 110))
 
         # Login row
         inp_url.draw(screen, font, "Server URL")

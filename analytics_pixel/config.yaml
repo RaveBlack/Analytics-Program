@@ -16,11 +16,6 @@ security:
 privacy:
   # If true, trust X-Forwarded-For. Keep false unless behind your own reverse proxy.
   trust_proxy_headers: false
-  # Controls whether identifiable fields are stored/displayed.
-  # - "hash": store only salted one-way hashes (privacy-first)
-  # - "plaintext": store raw identifiable values (NOT privacy-first)
-  # - "both": store raw + hashes (allows display + unique visitor analytics)
-  identifiable_mode: "hash"
 
 dashboard:
   refresh_seconds: 2.0
