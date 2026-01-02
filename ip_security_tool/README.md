@@ -2,57 +2,44 @@
 
 A single-file, privacy-focused web application for IP analysis and secure data handling.
 
-## Artifact
+## Artifacts
 
-The tool is compiled into a single bytecode file: `ip_tool.pyc`.
+1.  **Linux Executable**: `ip_security_tool_linux`
+    - A standalone binary containing the entire application (Python interpreter + Dependencies + Code).
+    - Can be run on Linux systems without installing Python or libraries.
+2.  **Source Code**: `server.py`
+    - The Python source code.
 
 ## Features
 
-1.  **Web Interface**: A clean HTML/CSS frontend embedded in the application.
-2.  **IP Validation & Metadata**: 
-    - Validates IPv4/IPv6.
-    - Checks Public vs Private status.
-    - Fetches metadata (ISP, Org, ASN) for public IPs.
-    - **Privacy**: No geolocation.
-3.  **Secure Encryption**:
-    - Uses AES (Fernet) encryption.
-    - **Worker Access Only**: Requires a `secret.key` file in the same directory to decrypt.
-4.  **Email Masking**: Validates and masks emails.
+- **Web Interface**: Clean HTML/CSS/JS frontend.
+- **IP Validation & Metadata**: Checks Public/Private IPs and fetches non-location metadata.
+- **Secure Encryption**: AES (Fernet) encryption for passwords/emails.
+- **Worker Security**: Uses `secret.key` for decryption (must be present in the running directory).
 
 ## Usage
 
-### 1. Run Locally or on a Server
-
-Run the compiled file directly with Python:
+### Running the Executable (Linux)
 
 ```bash
-python3 ip_tool.pyc
+# Make it executable (if needed)
+chmod +x ip_security_tool_linux
+
+# Run
+./ip_security_tool_linux
 ```
 
-- The server starts on port `5000` by default.
-- It listens on `0.0.0.0`, meaning it is accessible from the network.
+The server will start on port `5000`. Access it at:
+- `http://localhost:5000`
+- `http://YOUR_SERVER_IP:5000`
 
-### 2. Domain Setup (Type A Record)
+### Building for Windows (.exe)
 
-To host this on a domain:
+Since this environment is Linux, the generated file is a Linux binary. To get a Windows `.exe`:
+1.  Copy `server.py` to a Windows machine.
+2.  Install Python and requirements: `pip install flask requests cryptography pyinstaller`.
+3.  Run: `pyinstaller --onefile --name ip_tool server.py`.
 
-1.  **Get your Server IP**: Find the Public IPv4 address of the machine running this tool.
-2.  **DNS Configuration**: Go to your domain registrar and create an **A Record**.
-    - **Host**: `@` (or a subdomain like `tool`)
-    - **Value**: Your Server's Public IP.
-3.  **Access**: Open your browser to `http://yourdomain.com:5000`.
+### Encryption Key
 
-### 3. Encryption Key
-
-- On the first run, the tool generates a `secret.key` file in the working directory.
-- **Keep this file safe.**
-- Only a server/worker with this exact `secret.key` can decrypt data encrypted by the tool.
-
-## Development
-
-The source code is in `server.py`. To re-compile:
-
-```bash
-python3 -m py_compile server.py
-mv __pycache__/server.*.pyc ip_tool.pyc
-```
+On first run, a `secret.key` file is generated. **Keep this file.** It is required to decrypt any data secured by the tool.
