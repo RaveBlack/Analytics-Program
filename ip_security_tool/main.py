@@ -3,14 +3,28 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
-from rich.markdown import Markdown
-from utils import validate_and_check_ip, get_ip_metadata, hash_password, mask_email
+from utils import (
+    validate_and_check_ip, 
+    get_ip_metadata, 
+    mask_email, 
+    load_or_generate_key, 
+    encrypt_data, 
+    decrypt_data
+)
 
 console = Console()
 
+# Load encryption key at startup
+try:
+    ENCRYPTION_KEY = load_or_generate_key()
+except Exception as e:
+    console.print(f"[bold red]Critical Error:[/bold red] Could not load encryption key: {e}")
+    sys.exit(1)
+
 def display_header():
     console.print(Panel.fit("[bold cyan]IP & Data Security Tool[/bold cyan]", border_style="cyan"))
-    console.print("[dim]A privacy-focused tool for IP analysis and data handling.[/dim]\n")
+    console.print("[dim]A privacy-focused tool for IP analysis and secure data handling.[/dim]")
+    console.print(f"[dim]Encryption Key Loaded (Worker Access Only)[/dim]\n")
 
 def handle_ip_lookup():
     console.print("\n[bold yellow]--- IP Lookup (Public Only) ---[/bold yellow]")
@@ -47,20 +61,38 @@ def handle_ip_lookup():
         
         console.print(table)
 
-def handle_password_hashing():
-    console.print("\n[bold yellow]--- Password Hashing (SHA-256) ---[/bold yellow]")
-    password = Prompt.ask("Enter plain-text password", password=True)
+def handle_encryption_decryption():
+    console.print("\n[bold yellow]--- Secure Data Encryption (Reversible) ---[/bold yellow]")
+    console.print("Encrypt passwords or emails securely. Only the worker with the key file can decrypt.")
     
-    if not password:
-        console.print("[red]Password cannot be empty.[/red]")
-        return
+    action = Prompt.ask("Select Action", choices=["encrypt", "decrypt"], default="encrypt")
+    
+    if action == "encrypt":
+        text_to_encrypt = Prompt.ask("Enter text to encrypt (Password/Email)", password=True)
+        if not text_to_encrypt:
+            console.print("[red]Input cannot be empty.[/red]")
+            return
+            
+        encrypted = encrypt_data(text_to_encrypt, ENCRYPTION_KEY)
+        console.print(Panel(f"[bold]Encrypted Data:[/bold]\n[green]{encrypted}[/green]", title="Result", expand=False))
+        console.print("[dim]Save this string. It can only be decrypted with the 'secret.key' file.[/dim]")
         
-    hashed = hash_password(password)
-    console.print(Panel(f"[bold]SHA-256 Hash:[/bold]\n[green]{hashed}[/green]", title="Result", expand=False))
-    console.print("[dim]Note: Hashing performed locally.[/dim]")
+    elif action == "decrypt":
+        text_to_decrypt = Prompt.ask("Enter encrypted string")
+        if not text_to_decrypt:
+            console.print("[red]Input cannot be empty.[/red]")
+            return
+            
+        success, result = decrypt_data(text_to_decrypt, ENCRYPTION_KEY)
+        
+        if success:
+            console.print(Panel(f"[bold]Decrypted Data:[/bold]\n[green]{result}[/green]", title="Success", expand=False))
+        else:
+            console.print(f"[bold red]Decryption Failed:[/bold red] {result}")
+            console.print("[dim]Ensure you are using the correct key file and the data is valid.[/dim]")
 
 def handle_email_masking():
-    console.print("\n[bold yellow]--- Email Masking ---[/bold yellow]")
+    console.print("\n[bold yellow]--- Email Visualization (Masking) ---[/bold yellow]")
     email = Prompt.ask("Enter email address")
     
     is_valid, result = mask_email(email)
@@ -68,6 +100,7 @@ def handle_email_masking():
     if is_valid:
         console.print(f"Original: [dim]{email}[/dim]")
         console.print(f"Masked:   [bold green]{result}[/bold green]")
+        console.print("\n[dim]To encrypt this email securely, use option 2.[/dim]")
     else:
         console.print(f"[bold red]Error:[/bold red] {result}")
 
@@ -76,8 +109,8 @@ def main():
         display_header()
         
         console.print("1. [bold]IP Metadata Lookup[/bold]")
-        console.print("2. [bold]Password Hashing[/bold]")
-        console.print("3. [bold]Email Masking[/bold]")
+        console.print("2. [bold]Secure Encryption/Decryption[/bold] (Passwords & Emails)")
+        console.print("3. [bold]Email Visualization[/bold] (Masking)")
         console.print("4. [bold red]Exit[/bold red]")
         
         choice = Prompt.ask("\nSelect an option", choices=["1", "2", "3", "4"], default="1")
@@ -85,7 +118,7 @@ def main():
         if choice == "1":
             handle_ip_lookup()
         elif choice == "2":
-            handle_password_hashing()
+            handle_encryption_decryption()
         elif choice == "3":
             handle_email_masking()
         elif choice == "4":
@@ -93,8 +126,6 @@ def main():
             break
             
         console.print("\n" + "-" * 30 + "\n")
-        # Optional: wait for user input before clearing or looping? 
-        # For a simple CLI, just looping is fine.
 
 if __name__ == "__main__":
     try:

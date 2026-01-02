@@ -1,7 +1,51 @@
 import ipaddress
 import hashlib
 import re
+import os
 import requests
+from cryptography.fernet import Fernet
+
+# Key management for encryption
+KEY_FILE = "secret.key"
+
+def load_or_generate_key():
+    """
+    Loads the encryption key from the current directory or generates a new one.
+    Returns:
+        bytes: The encryption key.
+    """
+    if os.path.exists(KEY_FILE):
+        with open(KEY_FILE, "rb") as key_file:
+            return key_file.read()
+    else:
+        key = Fernet.generate_key()
+        with open(KEY_FILE, "wb") as key_file:
+            key_file.write(key)
+        return key
+
+def encrypt_data(data, key):
+    """
+    Encrypts a string using Fernet (symmetric encryption).
+    Returns:
+        str: The encrypted data (encoded as string).
+    """
+    f = Fernet(key)
+    # Fernet encrypt/decrypt expects bytes
+    encrypted = f.encrypt(data.encode())
+    return encrypted.decode()
+
+def decrypt_data(encrypted_data, key):
+    """
+    Decrypts a Fernet-encrypted string.
+    Returns:
+        tuple: (success, decrypted_string_or_error)
+    """
+    f = Fernet(key)
+    try:
+        decrypted = f.decrypt(encrypted_data.encode())
+        return True, decrypted.decode()
+    except Exception as e:
+        return False, str(e)
 
 def validate_and_check_ip(ip_str):
     """
@@ -13,7 +57,6 @@ def validate_and_check_ip(ip_str):
         ip_obj = ipaddress.ip_address(ip_str)
         # is_global is available in Python 3.4+. It returns True if the address is allocated 
         # for public networks. 
-        # Note: ipaddress.is_global excludes private, loopback, link-local, reserved, etc.
         is_public = ip_obj.is_global
         return True, is_public, ip_obj
     except ValueError:
@@ -36,13 +79,6 @@ def get_ip_metadata(ip_str):
         return response.json()
     except requests.RequestException as e:
         return {"status": "fail", "message": str(e)}
-
-def hash_password(password):
-    """
-    Hashes a password using SHA-256.
-    """
-    # Use SHA-256 as requested
-    return hashlib.sha256(password.encode()).hexdigest()
 
 def mask_email(email):
     """
