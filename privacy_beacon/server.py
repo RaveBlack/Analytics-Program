@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Privacy Beacon Analytics (stdlib-only).
 
