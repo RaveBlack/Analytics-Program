@@ -194,8 +194,36 @@ class NetMonTUI(App):
         # Silence werkzeug logs; they will disrupt the terminal UI.
         logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
-        t = threading.Thread(target=run_server, kwargs={"host": "127.0.0.1", "port": 8765}, daemon=True)
+        host = "127.0.0.1"
+        port = self._pick_backend_port(host, 8765)
+        self.base_url = f"http://{host}:{port}"
+        self._log(f"Backend will listen on {self.base_url}")
+
+        def _runner() -> None:
+            try:
+                run_server(host=host, port=port)
+            except Exception as e:
+                # If backend fails to start (port in use, missing deps), surface it.
+                self.call_from_thread(self._log, f"Backend failed to start: {e}")
+
+        t = threading.Thread(target=_runner, daemon=True)
         t.start()
+
+    def _pick_backend_port(self, host: str, preferred: int) -> int:
+        # Try preferred port; if unavailable, pick an ephemeral free port.
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((host, preferred))
+            port = s.getsockname()[1]
+            s.close()
+            return port
+        except OSError:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.bind((host, 0))
+            port = s.getsockname()[1]
+            s.close()
+            return port
 
     def _wait_for_backend(self, timeout_s: float = 4.0) -> None:
         deadline = time.time() + timeout_s
@@ -207,7 +235,10 @@ class NetMonTUI(App):
                     return
             except Exception:
                 time.sleep(0.15)
-        self._log("Warning: backend did not respond yet. Ping/capture may fail.")
+        self._log(
+            "Backend unreachable. Common causes: port blocked/in use, antivirus/firewall, or missing dependencies. "
+            "Try running `python server.py` to see the error."
+        )
 
     def _log(self, msg: str) -> None:
         area = self.query_one("#log", TextArea)

@@ -8,7 +8,18 @@ from dataclasses import dataclass, asdict
 from typing import Deque, Dict, List, Optional, Tuple
 
 from flask import Flask, jsonify, request
-from scapy.all import AsyncSniffer, IP, Raw, conf  # type: ignore
+
+# Scapy can be unavailable/misconfigured on some systems (especially Windows without Npcap).
+# We keep the API server functional for ping/status even when capture is unavailable.
+SCAPY_IMPORT_ERROR: Optional[str] = None
+try:
+    from scapy.all import AsyncSniffer, IP, Raw, conf  # type: ignore
+except Exception as e:  # pragma: no cover
+    AsyncSniffer = None  # type: ignore
+    IP = None  # type: ignore
+    Raw = None  # type: ignore
+    conf = None  # type: ignore
+    SCAPY_IMPORT_ERROR = str(e)
 
 
 @dataclass(frozen=True)
@@ -75,6 +86,8 @@ class CaptureState:
         return f == src or f == dst
 
     def _on_packet(self, pkt) -> None:
+        if IP is None:
+            return
         if IP not in pkt:
             return
         src = pkt[IP].src
@@ -89,7 +102,7 @@ class CaptureState:
         payload = ""
         payload_text = "[No L7 payload]"
         is_plain_text = False
-        if Raw in pkt:
+        if Raw is not None and Raw in pkt:
             raw_bytes = bytes(pkt[Raw].load)
             try:
                 payload = raw_bytes.decode("utf-8", errors="strict")
@@ -135,6 +148,11 @@ class CaptureState:
                     self._stats["bytes_in"] += row.length
 
     def start(self, ip_filter: str = "", iface: Optional[str] = None) -> None:
+        if SCAPY_IMPORT_ERROR or AsyncSniffer is None:
+            raise RuntimeError(
+                "Packet capture is unavailable (Scapy/Npcap issue). "
+                f"Details: {SCAPY_IMPORT_ERROR or 'scapy import failed'}"
+            )
         ip_filter = (ip_filter or "").strip()
         with self._lock:
             if self._running:
@@ -200,6 +218,8 @@ def create_app(state: CaptureState) -> Flask:
     @app.get("/api/interfaces")
     def interfaces():
         # scapy's conf.ifaces is the most portable for Windows/Linux/macOS
+        if SCAPY_IMPORT_ERROR or conf is None:
+            return jsonify({"interfaces": [], "error": f"Capture unavailable: {SCAPY_IMPORT_ERROR}"}), 503
         try:
             ifaces = []
             for _, iface in conf.ifaces.items():
