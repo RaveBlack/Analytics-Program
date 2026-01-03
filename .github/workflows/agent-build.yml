@@ -1,0 +1,44 @@
+name: Build agent (Windows signed exe)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "network_monitor/agent.py"
+      - "network_monitor/agent.spec"
+      - "network_monitor/requirements-agent.txt"
+      - ".github/workflows/agent-build.yml"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: network_monitor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install + build exe
+        run: .\build_agent_windows.ps1
+
+      - name: Verify signing secrets present (required)
+        run: |
+          if ("${{ secrets.WINDOWS_CERT_PFX_B64 }}" -eq "" -or "${{ secrets.WINDOWS_CERT_PASSWORD }}" -eq "") {
+            throw "Missing signing secrets. Set WINDOWS_CERT_PFX_B64 and WINDOWS_CERT_PASSWORD to produce a signed exe."
+          }
+
+      - name: Sign exe (required)
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "codesign.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String("${{ secrets.WINDOWS_CERT_PFX_B64 }}"))
+          $exePath = Join-Path "dist" "network-monitor-agent.exe"
+          signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f $pfx /p "${{ secrets.WINDOWS_CERT_PASSWORD }}" $exePath
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: network-monitor-agent-windows
+          path: network_monitor/dist/network-monitor-agent.exe
