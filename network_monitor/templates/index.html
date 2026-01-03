@@ -141,7 +141,11 @@
                         <button class="btn btn-sm btn-outline-secondary" onclick="saveAdminKey()">Save</button>
                         <button class="btn btn-sm btn-outline-primary" onclick="refreshAgents()">Refresh</button>
                     </div>
-                    <div class="form-text">Agents must run <code>agent.py</code>. Server can require <code>ADMIN_API_KEY</code>.</div>
+                    <div class="d-flex gap-2 mt-2">
+                        <button class="btn btn-sm btn-outline-success" onclick="createPairingCode()">Create pairing code</button>
+                        <span class="text-muted small" id="pairingBox">(no code)</span>
+                    </div>
+                    <div class="form-text">Run <code>agent.py</code> on Windows/macOS with <code>PAIR_CODE</code> once to pair (token is saved locally).</div>
                 </div>
                 <div class="col-lg-8">
                     <label class="form-label mb-1">Agents</label>
@@ -396,6 +400,23 @@
         await refreshDevices();
         await refreshCaptures();
         await refreshAgents();
+    }
+
+    async function createPairingCode() {
+        const el = document.getElementById('pairingBox');
+        if (el) el.textContent = 'creating...';
+        try {
+            const data = await fetchJson('/api/pairing/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{}'
+            });
+            if (el) el.textContent = `PAIR_CODE=${data.code} (expires ~${Math.round((data.expires_in_seconds || 0) / 60)} min)`;
+            setCmdOut(`Pairing code created: ${data.code}\nRun agent with PAIR_CODE=${data.code} once to enroll.`);
+        } catch (e) {
+            if (el) el.textContent = `error: ${e.message}`;
+            setCmdOut(`Error: ${e.message}`);
+        }
     }
 
     async function refreshInterfaces() {

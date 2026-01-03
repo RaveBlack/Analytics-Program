@@ -15,6 +15,7 @@ import time
 import json
 import base64
 import logging
+import secrets
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -54,6 +55,11 @@ _router_leases: List[Dict[str, str]] = []
 # Remote agent registry (for your own devices only)
 # agent_id -> metadata (and current socket sid)
 _agents: Dict[str, Dict[str, Any]] = {}
+
+# Agent pairing + tokens (safer than shared keys)
+AGENT_STATE_FILE = (Path(__file__).resolve().parent / "agents_state.json")
+_agent_tokens: Dict[str, Dict[str, Any]] = {}  # token -> {agent_id, created_at, last_seen}
+_pairings: Dict[str, Dict[str, Any]] = {}  # code -> {expires_at, created_at}
 
 
 def _which(cmd: str) -> Optional[str]:
@@ -114,6 +120,50 @@ def _require_admin_api_key() -> Optional[Tuple[Response, int]]:
     if got != required:
         return jsonify({"ok": False, "error": "Unauthorized"}), 401
     return None
+
+def _utc_now_iso() -> str:
+    return datetime.utcnow().isoformat() + "Z"
+
+
+def _load_agent_state() -> None:
+    global _agent_tokens
+    try:
+        if not AGENT_STATE_FILE.exists():
+            return
+        data = json.loads(AGENT_STATE_FILE.read_text(encoding="utf-8"))
+        tokens = data.get("tokens") or {}
+        if isinstance(tokens, dict):
+            _agent_tokens = tokens
+    except Exception:
+        # best-effort; don't crash server
+        return
+
+
+def _save_agent_state() -> None:
+    try:
+        payload = {"tokens": _agent_tokens, "saved_at": _utc_now_iso()}
+        AGENT_STATE_FILE.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    except Exception:
+        return
+
+
+def _new_pairing_code() -> str:
+    # 6-digit numeric code
+    return "".join(secrets.choice("0123456789") for _ in range(6))
+
+
+def _new_agent_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def _purge_expired_pairings() -> None:
+    now = time.time()
+    for code, meta in list(_pairings.items()):
+        if float(meta.get("expires_at", 0)) <= now:
+            _pairings.pop(code, None)
+
+
+_load_agent_state()
 
 
 def _list_interfaces() -> List[Dict[str, str]]:
@@ -710,7 +760,7 @@ def health():
     return jsonify(
         {
             "ok": True,
-            "time": datetime.utcnow().isoformat() + "Z",
+            "time": _utc_now_iso(),
             "tshark_available": bool(_which("tshark")),
             "platform": platform.platform(),
             "admin_api_key_required": bool(os.getenv("ADMIN_API_KEY", "").strip()),
@@ -808,6 +858,46 @@ def api_agents():
         }
     )
 
+@app.route("/api/pairing/start", methods=["POST"])
+def api_pairing_start():
+    auth = _require_admin_api_key()
+    if auth:
+        return auth
+    _purge_expired_pairings()
+    # create a unique code
+    for _ in range(20):
+        code = _new_pairing_code()
+        if code not in _pairings:
+            break
+    else:
+        return jsonify({"ok": False, "error": "Failed to allocate pairing code"}), 500
+
+    ttl_seconds = 10 * 60
+    _pairings[code] = {"created_at": _utc_now_iso(), "expires_at": time.time() + ttl_seconds}
+    return jsonify({"ok": True, "code": code, "expires_in_seconds": ttl_seconds})
+
+
+@app.route("/api/pairing/claim", methods=["POST"])
+def api_pairing_claim():
+    """
+    Agent claims a pairing code to receive a per-device token.
+    """
+    _purge_expired_pairings()
+    data = request.get_json(silent=True) or {}
+    code = str(data.get("code", "")).strip()
+    agent_id = str(data.get("agent_id", "")).strip()
+    if not code or code not in _pairings:
+        return jsonify({"ok": False, "error": "Invalid or expired pairing code"}), 400
+    if not agent_id or len(agent_id) > 64:
+        return jsonify({"ok": False, "error": "Invalid agent_id"}), 400
+
+    token = _new_agent_token()
+    _agent_tokens[token] = {"agent_id": agent_id, "created_at": _utc_now_iso(), "last_seen": _utc_now_iso()}
+    _save_agent_state()
+    # one-time code
+    _pairings.pop(code, None)
+    return jsonify({"ok": True, "token": token})
+
 
 @app.route('/api/agents/shutdown', methods=['POST'])
 def api_agents_shutdown():
@@ -845,7 +935,7 @@ def agent_disconnect():
     for agent_id, meta in list(_agents.items()):
         if meta.get("sid") == sid:
             meta["online"] = False
-            meta["last_seen"] = datetime.utcnow().isoformat() + "Z"
+            meta["last_seen"] = _utc_now_iso()
             meta.pop("sid", None)
             break
 
@@ -853,7 +943,9 @@ def agent_disconnect():
 @socketio.on("register", namespace="/agent")
 def agent_register(data):
     """
-    Agent registration requires shared secret AGENT_SHARED_KEY (env var) if set.
+    Agent registration:
+    - If AGENT_SHARED_KEY is set on the server: require it (legacy mode).
+    - Otherwise require a per-device token obtained via pairing code.
     """
     required = os.getenv("AGENT_SHARED_KEY", "").strip()
     provided = str((data or {}).get("shared_key", "")).strip()
@@ -861,10 +953,24 @@ def agent_register(data):
         emit("agent_status", {"msg": "unauthorized"})
         return
 
+    if not required:
+        token = str((data or {}).get("token", "")).strip()
+        if not token or token not in _agent_tokens:
+            emit("agent_status", {"msg": "unauthorized", "detail": "missing_or_invalid_token"})
+            return
+
     agent_id = str((data or {}).get("agent_id", "")).strip()
     if not agent_id or len(agent_id) > 64:
         emit("agent_status", {"msg": "invalid_agent_id"})
         return
+
+    if not required:
+        tok_agent_id = str((_agent_tokens.get(token) or {}).get("agent_id", "")).strip()
+        if tok_agent_id != agent_id:
+            emit("agent_status", {"msg": "unauthorized", "detail": "token_agent_mismatch"})
+            return
+        _agent_tokens[token]["last_seen"] = _utc_now_iso()
+        _save_agent_state()
 
     meta = {
         "agent_id": agent_id,
@@ -872,7 +978,7 @@ def agent_register(data):
         "platform": str((data or {}).get("platform", "")).strip(),
         "local_ips": (data or {}).get("local_ips") or [],
         "online": True,
-        "last_seen": datetime.utcnow().isoformat() + "Z",
+        "last_seen": _utc_now_iso(),
         "sid": request.sid,
     }
     _agents[agent_id] = meta

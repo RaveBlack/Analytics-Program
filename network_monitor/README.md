@@ -71,27 +71,28 @@ This is a local network traffic monitor application that works like a simplified
 The agent connects to the server over Socket.IO and will only execute shutdown when explicitly enabled.
 
 ### Server hardening (recommended)
-- Set an admin key for shutdown requests:
+- (Optional) Set an admin key for shutdown requests:
   - `ADMIN_API_KEY=<strong secret>`
-- Set an agent shared key (so only your agents can register):
-  - `AGENT_SHARED_KEY=<strong secret>`
+- Use **pairing codes** to enroll devices (no shared key required).
 - Access the dashboard remotely via **VPN** (Tailscale/WireGuard) rather than exposing port 5000 to the public internet.
 
 ### Run agent on a device
 
-- **Windows (PowerShell as Administrator)**:
-  - Set env vars and run:
-    - `setx SERVER_URL "http://<your-server-ip>:5000"`
-    - `setx AGENT_ID "my-pc-1"`
-    - `setx AGENT_SHARED_KEY "<same as server>"`
-    - `setx ENABLE_SHUTDOWN "1"`
-  - Then start:
-    - `python agent.py`
+- In the dashboard, click **Create pairing code** and copy the `PAIR_CODE=...` value.
 
-- **Linux/macOS**:
-  - `SERVER_URL="http://<your-server-ip>:5000" AGENT_ID="my-pc-1" AGENT_SHARED_KEY="<same as server>" ENABLE_SHUTDOWN=1 python3 agent.py`
+- **Windows (PowerShell as Administrator)**:
+  - `setx SERVER_URL "http://<your-server-ip>:5000"`
+  - `setx AGENT_ID "my-pc-1"`
+  - `setx PAIR_CODE "123456"`
+  - `setx ENABLE_SHUTDOWN "1"`
+  - Then run: `python agent.py`
+
+- **macOS (Terminal)**:
+  - `SERVER_URL="http://<your-server-ip>:5000" AGENT_ID="my-mac-1" PAIR_CODE="123456" ENABLE_SHUTDOWN=1 python3 agent.py`
 
 > The UI will prompt you to type `SHUTDOWN` before sending the command. The agent will refuse to power off unless `ENABLE_SHUTDOWN=1` is set on that machine.
+>
+> Pairing stores a token locally at `~/.network_monitor_agent_token` and uses it on future runs (so you only need `PAIR_CODE` once).
 
 ## Wireshark / tshark setup
 
