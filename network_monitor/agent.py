@@ -109,19 +109,7 @@ def _shutdown_now() -> None:
         subprocess.Popen(["shutdown", "/s", "/t", "0"])
         return
 
-    if sysname == "darwin":
-        # macOS: try AppleScript first (may require permissions), fallback to shutdown
-        if _which("osascript"):
-            subprocess.Popen(["osascript", "-e", 'tell application "System Events" to shut down'])
-            return
-        subprocess.Popen(["shutdown", "-h", "now"])
-        return
-
-    # Linux (best-effort)
-    if _which("systemctl"):
-        subprocess.Popen(["systemctl", "poweroff"])
-        return
-    subprocess.Popen(["shutdown", "-h", "now"])
+    print("Non-Windows platform detected. This agent is Windows-only.", flush=True)
 
 
 def _which(cmd: str):
@@ -166,6 +154,9 @@ def main() -> int:
 
     while True:
         try:
+            if platform.system().lower() != "windows":
+                print("This agent build is Windows-only.", flush=True)
+                return 2
             sio.connect(server_url, namespaces=["/agent"])
             sio.wait()
         except KeyboardInterrupt:

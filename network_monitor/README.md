@@ -66,7 +66,7 @@ This is a local network traffic monitor application that works like a simplified
      - **Captures (tshark)**: Start a duration-limited capture and then download the resulting `.pcapng`.
      - **Remote control (agents)**: Run `agent.py` on a device you own, then refresh “Agents” and (optionally) issue shutdown.
 
-## Remote control agent setup (your devices only)
+## Remote control agent setup (Windows-only)
 
 The agent connects to the server over Socket.IO and will only execute shutdown when explicitly enabled.
 
@@ -76,7 +76,7 @@ The agent connects to the server over Socket.IO and will only execute shutdown w
 - Use **pairing codes** to enroll devices (no shared key required).
 - Access the dashboard remotely via **VPN** (Tailscale/WireGuard) rather than exposing port 5000 to the public internet.
 
-### Run agent on a device
+### Run agent on a Windows device
 
 - In the dashboard, click **Create pairing code** and copy the `PAIR_CODE=...` value.
 
@@ -87,29 +87,23 @@ The agent connects to the server over Socket.IO and will only execute shutdown w
   - `setx ENABLE_SHUTDOWN "1"`
   - Then run: `python agent.py`
 
-- **macOS (Terminal)**:
-  - `SERVER_URL="http://<your-server-ip>:5000" AGENT_ID="my-mac-1" PAIR_CODE="123456" ENABLE_SHUTDOWN=1 python3 agent.py`
-
 > The UI will prompt you to type `SHUTDOWN` before sending the command. The agent will refuse to power off unless `ENABLE_SHUTDOWN=1` is set on that machine.
 >
 > Pairing stores a token locally at `~/.network_monitor_agent_token` and uses it on future runs (so you only need `PAIR_CODE` once).
 
-## Building a Windows `.exe` / macOS binary (and signing)
+## Building a Windows signed `.exe`
 
-### Build (unsigned)
-- Windows: run `network_monitor/build_agent_windows.ps1`
-- macOS: run `network_monitor/build_agent_macos.sh`
+### Build (unsigned, local)
+- Run `network_monitor/build_agent_windows.ps1`
 
 This uses PyInstaller with `network_monitor/agent.spec` and outputs:
 - Windows: `network_monitor/dist/network-monitor-agent.exe`
-- macOS: `network_monitor/dist/network-monitor-agent`
 
-### Signing (requires your real certificates)
-- **Windows (Authenticode)**: you need a code signing certificate (PFX). This repo includes a GitHub Actions workflow (`.github/workflows/agent-build.yml`) that will sign automatically if you set:
-  - `WINDOWS_CERT_PFX_B64` (base64 of the PFX file)
-  - `WINDOWS_CERT_PASSWORD`
-
-- **macOS**: “signed” typically means **codesigned + notarized** with an Apple Developer ID. If you want a proper `.app`/`.pkg` + notarization flow, tell me and I’ll wire it up (it needs Apple credentials as GitHub secrets).
+### Signing (required, CI)
+To produce a **signed** exe, use the workflow `.github/workflows/agent-build.yml`.
+It will **fail** unless you set these repo secrets:
+- `WINDOWS_CERT_PFX_B64` (base64 of your Authenticode PFX)
+- `WINDOWS_CERT_PASSWORD`
 
 ## Wireshark / tshark setup
 
