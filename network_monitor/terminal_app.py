@@ -40,6 +40,7 @@ class Packet:
     payload_text: str
     emails: List[str]
     secrets: List[Dict[str, str]]
+    sensitive_data: Dict[str, object]
     is_plain_text: bool
 
 
@@ -349,6 +350,7 @@ class NetMonTUI(App):
                 payload_text=str(p.get("payload_text", "")),
                 emails=list(p.get("emails", []) or []),
                 secrets=list(p.get("secrets", []) or []),
+                sensitive_data=dict(p.get("sensitive_data", {}) or {}),
                 is_plain_text=bool(p.get("is_plain_text", False)),
             )
             self.last_packet_id = max(self.last_packet_id, pkt.id)

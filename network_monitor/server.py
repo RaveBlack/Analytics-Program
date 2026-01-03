@@ -38,6 +38,9 @@ class PacketRow:
     payload_text: str
     emails: List[str]
     secrets: List[Dict[str, str]]
+    # Compatibility/UX field: aggregated sensitive findings.
+    # IMPORTANT: This does NOT include plaintext passwords/tokens.
+    sensitive_data: Dict[str, object]
     is_plain_text: bool
 
 
@@ -175,6 +178,11 @@ class CaptureState:
             payload_text = raw_bytes.decode("utf-8", errors="replace")
 
         emails, secrets = self._analyze_payload_text(payload_text)
+        sensitive_data: Dict[str, object] = {
+            "emails": emails,
+            # Store only hashes/metadata for secrets.
+            "secrets": secrets,
+        }
 
         now = time.time()
         row = PacketRow(
@@ -190,6 +198,7 @@ class CaptureState:
             payload_text=payload_text,
             emails=emails,
             secrets=secrets,
+            sensitive_data=sensitive_data,
             is_plain_text=is_plain_text,
         )
 
