@@ -1,7 +1,7 @@
 import eventlet
 eventlet.monkey_patch()
 
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_from_directory, Response
 from flask_socketio import SocketIO, emit
 from scapy.all import sniff, AsyncSniffer, IP, TCP, UDP, Raw, ARP
 from collections import deque
@@ -49,6 +49,7 @@ _gateway_mac_last: Optional[str] = None
 # Device discovery (controlled ping sweep -> populate ARP/neighbor cache)
 _discover_job: Dict[str, Any] = {"running": False, "started_at": None, "finished_at": None}
 _discover_results: List[Dict[str, Any]] = []
+_router_leases: List[Dict[str, str]] = []
 
 
 def _which(cmd: str) -> Optional[str]:
@@ -473,6 +474,135 @@ def _compute_mitm_indicators() -> Dict[str, Any]:
         "recent_events": recent,
     }
 
+def _parse_router_leases_text(text: str) -> List[Dict[str, str]]:
+    """
+    Parses a router DHCP lease export from:
+    - CSV with headers (ip, mac, hostname) in any order (case-insensitive)
+    - OpenWrt-style /tmp/dhcp.leases lines: "<expiry> <mac> <ip> <hostname> <clientid>"
+    Returns list of {ip, mac, hostname, source}.
+    """
+    text = (text or "").strip()
+    if not text:
+        return []
+
+    # Heuristic: OpenWrt dhcp.leases format
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    leases: List[Dict[str, str]] = []
+    openwrt_hits = 0
+    for ln in lines[:25]:
+        parts = re.split(r"\s+", ln)
+        if len(parts) >= 4 and parts[0].isdigit() and re.match(r"^[0-9a-fA-F:]{17}$", parts[1]):
+            openwrt_hits += 1
+    if openwrt_hits >= 2:
+        for ln in lines:
+            parts = re.split(r"\s+", ln)
+            if len(parts) < 4:
+                continue
+            expiry, mac, ip, hostname = parts[0], parts[1], parts[2], parts[3]
+            if not re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", ip):
+                continue
+            leases.append(
+                {
+                    "ip": ip,
+                    "mac": _normalize_mac(mac),
+                    "hostname": hostname if hostname != "*" else "",
+                    "source": "router_openwrt_dhcp_leases",
+                }
+            )
+        return leases
+
+    # CSV-ish parsing (simple, no extra dependency)
+    # Accept comma or tab separated
+    delim = "," if "," in lines[0] else ("\t" if "\t" in lines[0] else ",")
+    header = [h.strip().lower() for h in lines[0].split(delim)]
+    has_header = any(h in ("ip", "address", "ipv4", "mac", "hostname", "name") for h in header)
+
+    def col_idx(*names: str) -> int:
+        for n in names:
+            if n in header:
+                return header.index(n)
+        return -1
+
+    ip_i = col_idx("ip", "address", "ipv4")
+    mac_i = col_idx("mac", "mac address", "mac_address")
+    host_i = col_idx("hostname", "name", "device", "client")
+
+    start = 1 if has_header else 0
+    for ln in lines[start:]:
+        cols = [c.strip() for c in ln.split(delim)]
+        ip = cols[ip_i] if ip_i >= 0 and ip_i < len(cols) else ""
+        mac = cols[mac_i] if mac_i >= 0 and mac_i < len(cols) else ""
+        hostname = cols[host_i] if host_i >= 0 and host_i < len(cols) else ""
+        # Fallback: try to find IP and MAC anywhere
+        if not ip:
+            m = re.search(r"(\d{1,3}(?:\.\d{1,3}){3})", ln)
+            ip = m.group(1) if m else ""
+        if not mac:
+            m = re.search(r"([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})", ln)
+            mac = m.group(1) if m else ""
+        if not ip and not mac:
+            continue
+        leases.append(
+            {
+                "ip": ip,
+                "mac": _normalize_mac(mac),
+                "hostname": hostname,
+                "source": "router_csv",
+            }
+        )
+    return leases
+
+
+def _merge_devices(neigh: List[Dict[str, str]], leases: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """
+    Merge neighbor/ARP list with router leases by IP (and MAC if present).
+    """
+    merged_by_ip: Dict[str, Dict[str, str]] = {}
+    for d in neigh:
+        ip = (d.get("ip") or "").strip()
+        if not ip:
+            continue
+        merged_by_ip[ip] = {
+            "ip": ip,
+            "mac": _normalize_mac(d.get("mac") or ""),
+            "hostname": "",
+            "iface": d.get("iface") or "",
+            "state": d.get("state") or "",
+            "sources": "neighbor",
+        }
+    for l in leases:
+        ip = (l.get("ip") or "").strip()
+        if not ip:
+            continue
+        cur = merged_by_ip.get(ip)
+        if not cur:
+            merged_by_ip[ip] = {
+                "ip": ip,
+                "mac": _normalize_mac(l.get("mac") or ""),
+                "hostname": l.get("hostname") or "",
+                "iface": "",
+                "state": "",
+                "sources": l.get("source") or "router",
+            }
+        else:
+            # fill missing fields
+            if not cur.get("mac") and l.get("mac"):
+                cur["mac"] = _normalize_mac(l.get("mac") or "")
+            if not cur.get("hostname") and l.get("hostname"):
+                cur["hostname"] = l.get("hostname") or ""
+            cur["sources"] = ",".join(sorted(set((cur.get("sources") or "").split(",") + [(l.get("source") or "router")]))).strip(",")
+
+    # Sort private IPs first then numerically
+    def ip_key(x: Dict[str, str]) -> Tuple[int, int]:
+        ip = x.get("ip", "")
+        try:
+            addr = ipaddress.ip_address(ip)
+            return (0 if getattr(addr, "is_private", False) else 1, int(addr))
+        except ValueError:
+            return (2, 0)
+
+    return sorted(list(merged_by_ip.values()), key=ip_key)
+
 def packet_callback(packet):
     global target_ip_filter, sniffing
     
@@ -583,6 +713,71 @@ def api_network_info():
 @app.route('/api/devices')
 def api_devices():
     return jsonify({"devices": _list_neighbor_devices()})
+
+@app.route('/api/router/leases/import', methods=['POST'])
+def api_router_leases_import():
+    """
+    Import router DHCP leases export (CSV or dhcp.leases text).
+    Accepts either:
+    - multipart/form-data with file field "file"
+    - application/json with {"text": "..."}
+    """
+    global _router_leases
+    text = ""
+
+    if request.files and "file" in request.files:
+        f = request.files["file"]
+        try:
+            text = f.read().decode("utf-8", errors="replace")
+        except Exception:
+            return jsonify({"ok": False, "error": "Failed to read uploaded file"}), 400
+    else:
+        data = request.get_json(silent=True) or {}
+        text = str(data.get("text", "") or "")
+
+    leases = _parse_router_leases_text(text)
+    if not leases:
+        return jsonify({"ok": False, "error": "No leases parsed. Upload a CSV or dhcp.leases text."}), 400
+    _router_leases = leases
+    return jsonify({"ok": True, "count": len(leases)})
+
+
+@app.route('/api/router/leases')
+def api_router_leases():
+    return jsonify({"leases": _router_leases})
+
+
+@app.route('/api/devices/merged')
+def api_devices_merged():
+    neigh = _list_neighbor_devices()
+    merged = _merge_devices(neigh, _router_leases)
+    return jsonify({"devices": merged, "neighbor_count": len(neigh), "lease_count": len(_router_leases)})
+
+
+@app.route('/api/devices/merged.csv')
+def api_devices_merged_csv():
+    neigh = _list_neighbor_devices()
+    merged = _merge_devices(neigh, _router_leases)
+    lines = ["ip,mac,hostname,iface,state,sources"]
+    for d in merged:
+        # very small csv escaping
+        def esc(v: str) -> str:
+            v = (v or "").replace('"', '""')
+            return f"\"{v}\"" if ("," in v or "\n" in v) else v
+        lines.append(
+            ",".join(
+                [
+                    esc(d.get("ip", "")),
+                    esc(d.get("mac", "")),
+                    esc(d.get("hostname", "")),
+                    esc(d.get("iface", "")),
+                    esc(d.get("state", "")),
+                    esc(d.get("sources", "")),
+                ]
+            )
+        )
+    body = "\n".join(lines) + "\n"
+    return Response(body, mimetype="text/csv", headers={"Content-Disposition": "attachment; filename=devices_merged.csv"})
 
 @app.route('/api/discover/start', methods=['POST'])
 def api_discover_start():

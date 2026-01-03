@@ -113,6 +113,25 @@
                     <pre class="border rounded p-2" style="height: 200px; overflow:auto; background:#111; color:#eee;" id="cmdOut">Ready.</pre>
                 </div>
             </div>
+
+            <div class="row g-3 mt-1">
+                <div class="col-lg-6">
+                    <label class="form-label mb-1">Router DHCP leases import (optional)</label>
+                    <div class="d-flex gap-2 align-items-center">
+                        <input type="file" class="form-control form-control-sm" id="leaseFile" />
+                        <button class="btn btn-sm btn-outline-primary" onclick="uploadLeases()">Upload</button>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="loadMergedDevices()">Show merged</button>
+                        <a class="btn btn-sm btn-outline-success" href="/api/devices/merged.csv" target="_blank">Download CSV</a>
+                    </div>
+                    <div class="form-text">Upload a router export CSV or OpenWrt-style <code>dhcp.leases</code> text.</div>
+                </div>
+                <div class="col-lg-6">
+                    <label class="form-label mb-1">Merged device list (router leases + neighbor cache)</label>
+                    <div class="border rounded p-2 bg-light" style="height: 160px; overflow:auto; font-family: monospace; font-size: 0.85em;" id="mergedBox">
+                        (upload leases, or just use discovery + devices list)
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -518,6 +537,44 @@
         try {
             const data = await fetchJson('/api/discover/results');
             renderDiscoveredDevices(data);
+        } catch (e) {
+            box.textContent = `Error: ${e.message}`;
+        }
+    }
+
+    async function uploadLeases() {
+        const fileInput = document.getElementById('leaseFile');
+        const box = document.getElementById('mergedBox');
+        if (!fileInput.files || !fileInput.files.length) {
+            box.textContent = 'Select a leases file first.';
+            return;
+        }
+        box.textContent = 'Uploading and parsing leases...';
+        try {
+            const fd = new FormData();
+            fd.append('file', fileInput.files[0]);
+            const res = await fetch('/api/router/leases/import', { method: 'POST', body: fd });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data && data.error ? data.error : `Upload failed (${res.status})`);
+            box.textContent = `Imported ${data.count} leases. Click “Show merged”.`;
+        } catch (e) {
+            box.textContent = `Error: ${e.message}`;
+        }
+    }
+
+    async function loadMergedDevices() {
+        const box = document.getElementById('mergedBox');
+        box.textContent = 'Loading merged device list...';
+        try {
+            const data = await fetchJson('/api/devices/merged');
+            const devices = data.devices || [];
+            if (!devices.length) {
+                box.textContent = '(no devices yet)';
+                return;
+            }
+            box.textContent = devices
+                .map(d => `${d.ip || ''}\t${d.mac || ''}\t${d.hostname || ''}\t${d.iface || ''}\t${d.state || ''}\t${d.sources || ''}`.trim())
+                .join('\n');
         } catch (e) {
             box.textContent = `Error: ${e.message}`;
         }

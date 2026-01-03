@@ -12,6 +12,7 @@ This is a local network traffic monitor application that works like a simplified
 - **Wireshark CLI Captures**: Start/stop duration-limited captures using `tshark`, list and download capture files.
 - **Device List**: Shows devices from your OS ARP/neighbor cache (passive; no scanning).
 - **Device Discovery (Safe)**: Optional controlled **ping sweep** on your **private LAN** to help populate the ARP/neighbor cache, then displays discovered entries.
+- **Router Leases Import (Optional)**: Upload a router DHCP leases export (CSV or OpenWrt `dhcp.leases`) and merge it with neighbor/ARP data. Download merged devices as CSV.
 
 ## Prerequisites
 - Python 3.x installed on your device.
@@ -58,6 +59,7 @@ This is a local network traffic monitor application that works like a simplified
      - **Ping / Traceroute**: Run basic diagnostics and see the output in the page.
      - **Devices**: View ARP/neighbor-cache entries (may be empty until your machine talks to devices).
      - **Device discovery**: Runs a limited ping sweep on your local private subnet, then shows the neighbor/ARP table.
+     - **Router leases import**: Upload your router’s DHCP leases export to get a more complete “who’s connected” list, then use “Download CSV”.
      - **Captures (tshark)**: Start a duration-limited capture and then download the resulting `.pcapng`.
 
 ## Wireshark / tshark setup
