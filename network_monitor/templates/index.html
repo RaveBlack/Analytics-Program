@@ -73,6 +73,22 @@
                 </div>
                 <div class="col-lg-6">
                     <div class="d-flex justify-content-between align-items-center">
+                        <label class="form-label mb-1">MITM checks (passive)</label>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-outline-primary" onclick="runMitmCheck()">Run MITM Check</button>
+                            <button class="btn btn-sm btn-outline-success" onclick="startArpMonitor()">Start ARP monitor</button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="stopArpMonitor()">Stop</button>
+                        </div>
+                    </div>
+                    <div class="border rounded p-2" style="height: 160px; overflow:auto; font-family: monospace; font-size: 0.85em; background:#fff3cd;" id="mitmBox">
+                        Click “Run MITM Check” to see indicators (gateway MAC change, duplicate IP mappings, ARP conflicts).
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-3 mt-1">
+                <div class="col-lg-6">
+                    <div class="d-flex justify-content-between align-items-center">
                         <label class="form-label mb-1">Captures</label>
                         <button class="btn btn-sm btn-outline-secondary" onclick="refreshCaptures()">Refresh</button>
                     </div>
@@ -80,9 +96,6 @@
                         None
                     </div>
                 </div>
-            </div>
-
-            <div class="row g-3 mt-1">
                 <div class="col-12">
                     <label class="form-label mb-1">Command output</label>
                     <pre class="border rounded p-2" style="height: 200px; overflow:auto; background:#111; color:#eee;" id="cmdOut">Ready.</pre>
@@ -452,6 +465,68 @@
                 line.appendChild(meta);
                 box.appendChild(line);
             }
+        } catch (e) {
+            box.textContent = `Error: ${e.message}`;
+        }
+    }
+
+    function renderMitmSummary(summary) {
+        const box = document.getElementById('mitmBox');
+        const indicators = summary.indicators || [];
+        const gw = summary.gateway_ip ? `${summary.gateway_ip} (${summary.gateway_mac || 'mac unknown'})` : '(unknown)';
+        const running = summary.arp_monitor_running ? 'running' : 'stopped';
+
+        if (!indicators.length) {
+            box.textContent = `No indicators detected right now.\nGateway: ${gw}\nARP monitor: ${running}`;
+            return;
+        }
+
+        const lines = [];
+        lines.push(`Gateway: ${gw}`);
+        lines.push(`ARP monitor: ${running}`);
+        lines.push('');
+        lines.push('Indicators:');
+        for (const ind of indicators) {
+            lines.push(`- [${(ind.severity || 'info').toUpperCase()}] ${ind.type}`);
+            if (ind.type === 'gateway_mac_changed' && ind.details) {
+                lines.push(`  gateway_ip=${ind.details.gateway_ip} old=${ind.details.old_mac} new=${ind.details.new_mac}`);
+            } else if (ind.type === 'duplicate_ip_mapping' && Array.isArray(ind.details)) {
+                for (const c of ind.details.slice(0, 8)) {
+                    lines.push(`  ip=${c.ip} macs=${(c.macs || []).join(',')}`);
+                }
+            }
+        }
+        box.textContent = lines.join('\n');
+    }
+
+    async function runMitmCheck() {
+        const box = document.getElementById('mitmBox');
+        box.textContent = 'Checking...';
+        try {
+            const summary = await fetchJson('/api/mitm/summary');
+            renderMitmSummary(summary);
+        } catch (e) {
+            box.textContent = `Error: ${e.message}`;
+        }
+    }
+
+    async function startArpMonitor() {
+        const box = document.getElementById('mitmBox');
+        box.textContent = 'Starting ARP monitor...';
+        try {
+            await fetchJson('/api/mitm/monitor/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            await runMitmCheck();
+        } catch (e) {
+            box.textContent = `Error: ${e.message}`;
+        }
+    }
+
+    async function stopArpMonitor() {
+        const box = document.getElementById('mitmBox');
+        box.textContent = 'Stopping ARP monitor...';
+        try {
+            await fetchJson('/api/mitm/monitor/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            await runMitmCheck();
         } catch (e) {
             box.textContent = `Error: ${e.message}`;
         }

@@ -3,7 +3,8 @@ eventlet.monkey_patch()
 
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from flask_socketio import SocketIO, emit
-from scapy.all import sniff, IP, TCP, UDP, Raw
+from scapy.all import sniff, AsyncSniffer, IP, TCP, UDP, Raw, ARP
+from collections import deque
 import ipaddress
 import os
 import platform
@@ -37,6 +38,13 @@ CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
 
 # capture_id -> process info
 _tshark_processes: Dict[str, Dict[str, Any]] = {}
+
+# Passive MITM-detection state (no interception, no spoofing)
+_arp_sniffer: Optional[AsyncSniffer] = None
+_arp_events: "deque[Dict[str, Any]]" = deque(maxlen=300)
+_ip_to_macs: Dict[str, set] = {}
+_gateway_ip_last: Optional[str] = None
+_gateway_mac_last: Optional[str] = None
 
 
 def _which(cmd: str) -> Optional[str]:
@@ -173,6 +181,164 @@ def _list_neighbor_devices() -> List[Dict[str, str]]:
 
     return devices
 
+
+def _get_default_gateway_ip() -> Optional[str]:
+    """
+    Best-effort default gateway detection (no scanning).
+    """
+    sysname = platform.system().lower()
+    if sysname == "windows":
+        rc, out = _run_command(["ipconfig"], timeout_s=10)
+        if rc != 0:
+            return None
+        # "Default Gateway . . . . . . . . . : 192.168.1.1"
+        for line in out.splitlines():
+            if "Default Gateway" in line:
+                m = re.search(r"(\d{1,3}(?:\.\d{1,3}){3})", line)
+                if m:
+                    return m.group(1)
+        return None
+
+    # Linux/macOS: "ip route show default"
+    if _which("ip"):
+        rc, out = _run_command(["ip", "route", "show", "default"], timeout_s=10)
+        if rc != 0:
+            return None
+        # "default via 192.168.1.1 dev wlan0 ..."
+        m = re.search(r"\bvia\s+(\d{1,3}(?:\.\d{1,3}){3})\b", out)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _normalize_mac(mac: str) -> str:
+    mac = (mac or "").strip().lower()
+    return mac
+
+
+def _neighbor_mac_for_ip(ip: str) -> str:
+    for d in _list_neighbor_devices():
+        if d.get("ip") == ip:
+            return _normalize_mac(d.get("mac") or "")
+    return ""
+
+
+def _record_arp_event(kind: str, details: Dict[str, Any]) -> None:
+    _arp_events.appendleft(
+        {
+            "time": datetime.utcnow().isoformat() + "Z",
+            "kind": kind,
+            **details,
+        }
+    )
+
+
+def _arp_callback(pkt: Any) -> None:
+    try:
+        if ARP not in pkt:
+            return
+        arp = pkt[ARP]
+        ip = str(getattr(arp, "psrc", "") or "").strip()
+        mac = _normalize_mac(str(getattr(arp, "hwsrc", "") or ""))
+        op = int(getattr(arp, "op", 0) or 0)  # 1=request, 2=reply
+        if not ip or not mac:
+            return
+
+        seen = _ip_to_macs.setdefault(ip, set())
+        if mac not in seen and len(seen) > 0:
+            _record_arp_event(
+                "ip_conflict_suspected",
+                {"ip": ip, "new_mac": mac, "known_macs": sorted(seen), "op": op},
+            )
+        seen.add(mac)
+    except Exception:
+        # Never let packet parsing crash the server
+        return
+
+
+def _arp_monitor_running() -> bool:
+    return bool(_arp_sniffer and getattr(_arp_sniffer, "running", False))
+
+
+def _start_arp_monitor() -> None:
+    global _arp_sniffer
+    if os.getenv("DISABLE_ARP_MONITOR", "").strip() == "1":
+        return
+    if _arp_monitor_running():
+        return
+    _arp_sniffer = AsyncSniffer(filter="arp", prn=_arp_callback, store=False)
+    _arp_sniffer.start()
+    _record_arp_event("monitor_started", {})
+
+
+def _stop_arp_monitor() -> None:
+    global _arp_sniffer
+    if not _arp_sniffer:
+        return
+    try:
+        if getattr(_arp_sniffer, "running", False):
+            _arp_sniffer.stop()
+            _record_arp_event("monitor_stopped", {})
+    finally:
+        _arp_sniffer = None
+
+
+def _compute_mitm_indicators() -> Dict[str, Any]:
+    """
+    Returns passive indicators only:
+    - duplicate IP->MAC mapping changes
+    - default gateway MAC change
+    - recent ARP-based conflicts seen
+    """
+    global _gateway_ip_last, _gateway_mac_last
+    indicators: List[Dict[str, Any]] = []
+
+    # Duplicate IPs in neighbor cache (same IP, multiple MACs observed historically)
+    conflicts = [
+        {"ip": ip, "macs": sorted(list(macs))}
+        for ip, macs in _ip_to_macs.items()
+        if len(macs) > 1
+    ]
+    if conflicts:
+        indicators.append({"type": "duplicate_ip_mapping", "severity": "medium", "details": conflicts})
+
+    # Gateway change indicator
+    gw_ip = _get_default_gateway_ip()
+    gw_mac = _neighbor_mac_for_ip(gw_ip) if gw_ip else ""
+    if gw_ip:
+        if not gw_mac:
+            indicators.append(
+                {
+                    "type": "gateway_mac_unknown",
+                    "severity": "info",
+                    "details": {"gateway_ip": gw_ip, "note": "Gateway MAC not in neighbor/ARP cache yet."},
+                }
+            )
+        else:
+            if _gateway_ip_last == gw_ip and _gateway_mac_last and _gateway_mac_last != gw_mac:
+                indicators.append(
+                    {
+                        "type": "gateway_mac_changed",
+                        "severity": "high",
+                        "details": {"gateway_ip": gw_ip, "old_mac": _gateway_mac_last, "new_mac": gw_mac},
+                    }
+                )
+            _gateway_ip_last = gw_ip
+            _gateway_mac_last = gw_mac
+
+    # Recent ARP conflict events (from passive monitor)
+    recent = list(_arp_events)[:25]
+    if any(e.get("kind") == "ip_conflict_suspected" for e in recent):
+        indicators.append({"type": "arp_conflict_events", "severity": "medium", "details": recent[:10]})
+
+    return {
+        "gateway_ip": gw_ip or "",
+        "gateway_mac": gw_mac or "",
+        "arp_monitor_running": _arp_monitor_running(),
+        "indicators": indicators,
+        "recent_events": recent,
+    }
+
 def packet_callback(packet):
     global target_ip_filter, sniffing
     
@@ -278,6 +444,34 @@ def api_interfaces():
 @app.route('/api/devices')
 def api_devices():
     return jsonify({"devices": _list_neighbor_devices()})
+
+@app.route('/api/mitm/summary')
+def api_mitm_summary():
+    # Build baseline from current neighbor cache too (helps even if ARP sniff isn't running)
+    for d in _list_neighbor_devices():
+        ip = (d.get("ip") or "").strip()
+        mac = _normalize_mac(d.get("mac") or "")
+        if ip and mac:
+            _ip_to_macs.setdefault(ip, set()).add(mac)
+    return jsonify(_compute_mitm_indicators())
+
+
+@app.route('/api/mitm/monitor/start', methods=['POST'])
+def api_mitm_monitor_start():
+    try:
+        _start_arp_monitor()
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Failed to start ARP monitor: {e}"}), 500
+    return jsonify({"ok": True, "running": _arp_monitor_running()})
+
+
+@app.route('/api/mitm/monitor/stop', methods=['POST'])
+def api_mitm_monitor_stop():
+    try:
+        _stop_arp_monitor()
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Failed to stop ARP monitor: {e}"}), 500
+    return jsonify({"ok": True, "running": _arp_monitor_running()})
 
 
 @app.route('/api/ping', methods=['POST'])
