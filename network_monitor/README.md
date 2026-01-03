@@ -8,11 +8,17 @@ This is a local network traffic monitor application that works like a simplified
 - **Hex/Base64 Views**: Options to view binary data in Hex or Base64 formats.
 - **Filtering**: Filter traffic by IP address.
 - **Web UI**: "Terminal + Wireshark" feel with buttons and interactive table.
+- **Permissioned Diagnostics**: Ping + traceroute buttons from the web UI.
+- **Wireshark CLI Captures**: Start/stop duration-limited captures using `tshark`, list and download capture files.
+- **Device List**: Shows devices from your OS ARP/neighbor cache (passive; no scanning).
 
 ## Prerequisites
 - Python 3.x installed on your device.
 - `pip` (Python package manager).
 - Administrator/Root privileges (required for capturing network packets).
+- Optional: **Wireshark / tshark** installed (for file captures).
+
+> This project is intended for monitoring and troubleshooting **networks you own or have explicit permission to test**.
 
 ## Installation
 
@@ -47,7 +53,20 @@ This is a local network traffic monitor application that works like a simplified
    - **Pause/Resume**: Use the Pause button to stop the table from updating while you inspect packets.
    - **Inspect**: Click on any row in the table to see the payload in the bottom panel.
    - **Decode**: Use the "Plain Text", "Hex Dump", or "Base64" buttons to change how the payload is displayed.
+   - **Tools panel**:
+     - **Ping / Traceroute**: Run basic diagnostics and see the output in the page.
+     - **Devices**: View ARP/neighbor-cache entries (may be empty until your machine talks to devices).
+     - **Captures (tshark)**: Start a duration-limited capture and then download the resulting `.pcapng`.
+
+## Wireshark / tshark setup
+
+- **Linux (Debian/Ubuntu)**:
+  - Install `tshark` via your package manager (often `wireshark-common` / `tshark`).
+  - You may need privileges/capabilities to capture (running as root is simplest for local testing).
+- **Windows**:
+  - Install Wireshark and ensure `tshark.exe` is available on `PATH` (or use the Wireshark install that includes it).
 
 ## Troubleshooting
 - **No Packets?** Ensure you are running with `sudo` or Administrator privileges. Regular users often cannot capture network traffic.
 - **Address in use?** If port 5000 is taken, edit `app.py` and change the port number at the bottom of the file.
+- **tshark missing?** The Tools panel will show `tshark: missing` until Wireshark/tshark is installed and on `PATH`.

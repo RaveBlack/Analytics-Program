@@ -22,6 +22,75 @@
 <div class="container-fluid mt-3">
     <h3><span class="badge bg-primary">L7</span> Traffic Monitor</h3>
     
+    <!-- Tools Panel -->
+    <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span>Tools (permissioned diagnostics + Wireshark CLI)</span>
+            <span class="text-muted small" id="healthMsg">Checking capabilities...</span>
+        </div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-lg-3">
+                    <label class="form-label">Interface</label>
+                    <select class="form-select" id="ifaceSelect"></select>
+                    <div class="form-text">Used for `tshark` captures (if installed).</div>
+                </div>
+                <div class="col-lg-3">
+                    <label class="form-label">Ping host</label>
+                    <div class="input-group">
+                        <input class="form-control" id="pingHost" placeholder="e.g. 8.8.8.8 or router.local">
+                        <button class="btn btn-outline-primary" onclick="doPing()">Ping</button>
+                    </div>
+                </div>
+                <div class="col-lg-3">
+                    <label class="form-label">Traceroute host</label>
+                    <div class="input-group">
+                        <input class="form-control" id="traceHost" placeholder="e.g. 1.1.1.1">
+                        <button class="btn btn-outline-primary" onclick="doTrace()">Trace</button>
+                    </div>
+                </div>
+                <div class="col-lg-3">
+                    <label class="form-label">Wireshark capture</label>
+                    <div class="input-group">
+                        <input class="form-control" id="captureDuration" type="number" min="5" max="300" value="30">
+                        <span class="input-group-text">sec</span>
+                        <button class="btn btn-outline-success" onclick="startCapture()">Start</button>
+                        <button class="btn btn-outline-danger" onclick="stopCapture()">Stop</button>
+                    </div>
+                    <div class="form-text">Captures are duration-limited and saved to disk.</div>
+                </div>
+            </div>
+
+            <div class="row g-3 mt-1">
+                <div class="col-lg-6">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <label class="form-label mb-1">Device list (from ARP/neighbor cache)</label>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="refreshDevices()">Refresh</button>
+                    </div>
+                    <div class="border rounded p-2 bg-light" style="height: 160px; overflow:auto; font-family: monospace; font-size: 0.85em;" id="devicesBox">
+                        Loading...
+                    </div>
+                </div>
+                <div class="col-lg-6">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <label class="form-label mb-1">Captures</label>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="refreshCaptures()">Refresh</button>
+                    </div>
+                    <div class="border rounded p-2 bg-light" style="height: 160px; overflow:auto; font-family: monospace; font-size: 0.85em;" id="capturesBox">
+                        None
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-3 mt-1">
+                <div class="col-12">
+                    <label class="form-label mb-1">Command output</label>
+                    <pre class="border rounded p-2" style="height: 200px; overflow:auto; background:#111; color:#eee;" id="cmdOut">Ready.</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Control Bar -->
     <div class="control-bar d-flex gap-2 align-items-center">
         <input type="text" id="ipFilter" class="form-control" placeholder="Filter by IP (e.g., 192.168.1.5)" style="max-width: 300px;">
@@ -78,6 +147,7 @@
     let isSniffing = true;
     let selectedPacket = null;
     let currentView = 'text';
+    let currentCaptureId = null;
 
     // Socket Events
     socket.on('connect', () => {
@@ -214,6 +284,181 @@
     function updateStatus(msg) {
         document.getElementById('statusMsg').innerText = msg;
     }
+
+    // Tools helpers
+    function setCmdOut(text) {
+        document.getElementById('cmdOut').textContent = text || '';
+    }
+
+    async function fetchJson(url, options) {
+        const res = await fetch(url, options);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            const msg = data && data.error ? data.error : `Request failed (${res.status})`;
+            throw new Error(msg);
+        }
+        return data;
+    }
+
+    async function initTools() {
+        try {
+            const health = await fetchJson('/api/health');
+            document.getElementById('healthMsg').textContent =
+                `tshark: ${health.tshark_available ? 'available' : 'missing'} • ${health.platform}`;
+        } catch (e) {
+            document.getElementById('healthMsg').textContent = 'Health check failed';
+        }
+
+        await refreshInterfaces();
+        await refreshDevices();
+        await refreshCaptures();
+    }
+
+    async function refreshInterfaces() {
+        const sel = document.getElementById('ifaceSelect');
+        sel.innerHTML = '';
+        try {
+            const data = await fetchJson('/api/interfaces');
+            const ifaces = data.interfaces || [];
+            if (!ifaces.length) {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = '(no interfaces found)';
+                sel.appendChild(opt);
+                return;
+            }
+            for (const i of ifaces) {
+                const opt = document.createElement('option');
+                opt.value = i.name;
+                opt.textContent = `${i.name} (${i.state || 'unknown'})`;
+                sel.appendChild(opt);
+            }
+        } catch (e) {
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = '(failed to load)';
+            sel.appendChild(opt);
+        }
+    }
+
+    async function refreshDevices() {
+        const box = document.getElementById('devicesBox');
+        box.textContent = 'Loading...';
+        try {
+            const data = await fetchJson('/api/devices');
+            const devs = data.devices || [];
+            if (!devs.length) {
+                box.textContent = '(no devices in neighbor/ARP cache yet)';
+                return;
+            }
+            box.textContent = devs
+                .map(d => `${d.ip || ''}\t${d.mac || ''}\t${d.iface || ''}\t${d.state || ''}`.trim())
+                .join('\n');
+        } catch (e) {
+            box.textContent = `Error: ${e.message}`;
+        }
+    }
+
+    async function doPing() {
+        const host = document.getElementById('pingHost').value;
+        setCmdOut('Running ping...');
+        try {
+            const data = await fetchJson('/api/ping', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ host, count: 4 })
+            });
+            setCmdOut(data.output || '');
+        } catch (e) {
+            setCmdOut(`Error: ${e.message}`);
+        }
+    }
+
+    async function doTrace() {
+        const host = document.getElementById('traceHost').value;
+        setCmdOut('Running traceroute...');
+        try {
+            const data = await fetchJson('/api/traceroute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ host, max_hops: 20 })
+            });
+            setCmdOut(data.output || '');
+        } catch (e) {
+            setCmdOut(`Error: ${e.message}`);
+        }
+    }
+
+    async function startCapture() {
+        const iface = document.getElementById('ifaceSelect').value;
+        const duration_seconds = parseInt(document.getElementById('captureDuration').value || '30', 10);
+        setCmdOut('Starting tshark capture...');
+        try {
+            const data = await fetchJson('/api/capture/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ interface: iface, duration_seconds })
+            });
+            currentCaptureId = data.capture_id;
+            setCmdOut(`Capture started: ${data.filename}\n(capture_id: ${currentCaptureId})`);
+            await refreshCaptures();
+        } catch (e) {
+            setCmdOut(`Error: ${e.message}`);
+        }
+    }
+
+    async function stopCapture() {
+        if (!currentCaptureId) {
+            setCmdOut('No active capture_id (start a capture first).');
+            return;
+        }
+        setCmdOut('Stopping capture...');
+        try {
+            await fetchJson('/api/capture/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ capture_id: currentCaptureId })
+            });
+            setCmdOut('Stop signal sent. (File will be finalized by tshark)');
+            currentCaptureId = null;
+            await refreshCaptures();
+        } catch (e) {
+            setCmdOut(`Error: ${e.message}`);
+        }
+    }
+
+    async function refreshCaptures() {
+        const box = document.getElementById('capturesBox');
+        box.textContent = 'Loading...';
+        try {
+            const data = await fetchJson('/api/capture/list');
+            const caps = data.captures || [];
+            if (!caps.length) {
+                box.textContent = '(no captures yet)';
+                return;
+            }
+            box.innerHTML = '';
+            for (const c of caps) {
+                const line = document.createElement('div');
+                const a = document.createElement('a');
+                a.href = `/api/capture/download/${encodeURIComponent(c.filename)}`;
+                a.textContent = c.filename;
+                a.className = 'me-2';
+                a.target = '_blank';
+                const meta = document.createElement('span');
+                meta.className = 'text-muted';
+                meta.textContent = `(${Math.round((c.size_bytes || 0) / 1024)} KB, ${c.modified_at || ''})`;
+                line.appendChild(a);
+                line.appendChild(meta);
+                box.appendChild(line);
+            }
+        } catch (e) {
+            box.textContent = `Error: ${e.message}`;
+        }
+    }
+
+    // Init tools on load
+    initTools();
 </script>
 
 </body>
