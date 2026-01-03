@@ -2,3 +2,5 @@ scapy
 flask
 flask-socketio
 eventlet
+requests
+textual
