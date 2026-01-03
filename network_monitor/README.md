@@ -94,6 +94,23 @@ The agent connects to the server over Socket.IO and will only execute shutdown w
 >
 > Pairing stores a token locally at `~/.network_monitor_agent_token` and uses it on future runs (so you only need `PAIR_CODE` once).
 
+## Building a Windows `.exe` / macOS binary (and signing)
+
+### Build (unsigned)
+- Windows: run `network_monitor/build_agent_windows.ps1`
+- macOS: run `network_monitor/build_agent_macos.sh`
+
+This uses PyInstaller with `network_monitor/agent.spec` and outputs:
+- Windows: `network_monitor/dist/network-monitor-agent.exe`
+- macOS: `network_monitor/dist/network-monitor-agent`
+
+### Signing (requires your real certificates)
+- **Windows (Authenticode)**: you need a code signing certificate (PFX). This repo includes a GitHub Actions workflow (`.github/workflows/agent-build.yml`) that will sign automatically if you set:
+  - `WINDOWS_CERT_PFX_B64` (base64 of the PFX file)
+  - `WINDOWS_CERT_PASSWORD`
+
+- **macOS**: “signed” typically means **codesigned + notarized** with an Apple Developer ID. If you want a proper `.app`/`.pkg` + notarization flow, tell me and I’ll wire it up (it needs Apple credentials as GitHub secrets).
+
 ## Wireshark / tshark setup
 
 - **Linux (Debian/Ubuntu)**:
