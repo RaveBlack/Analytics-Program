@@ -34,6 +34,7 @@ class Packet:
     length: int
     summary: str
     payload: str
+    payload_text: str
     is_plain_text: bool
 
 
@@ -218,6 +219,7 @@ class NetMonTUI(App):
                 length=int(p.get("length", 0)),
                 summary=str(p.get("summary", "")),
                 payload=str(p.get("payload", "")),
+                payload_text=str(p.get("payload_text", "")),
                 is_plain_text=bool(p.get("is_plain_text", False)),
             )
             self.last_packet_id = max(self.last_packet_id, pkt.id)
@@ -250,10 +252,14 @@ class NetMonTUI(App):
         if not pkt:
             return
         payload = pkt.payload or ""
-        if not payload:
+        payload_text = pkt.payload_text or ""
+        if not payload and not payload_text:
             view = "(No Layer-7 payload)"
         else:
-            view = payload if pkt.is_plain_text else f"(base64) {payload}"
+            # Always show a plain-text L7 view (best effort)
+            view = payload_text or payload
+            if not pkt.is_plain_text and payload:
+                view = view + "\n\n---\nBase64:\n" + payload
         area = self.query_one("#payload", TextArea)
         area.text = view[:20000]
         area.scroll_home(animate=False)

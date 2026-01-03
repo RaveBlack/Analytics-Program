@@ -22,6 +22,7 @@ class PacketRow:
     length: int
     summary: str
     payload: str
+    payload_text: str
     is_plain_text: bool
 
 
@@ -86,6 +87,7 @@ class CaptureState:
 
         raw_bytes = b""
         payload = ""
+        payload_text = ""
         is_plain_text = False
         if Raw in pkt:
             raw_bytes = bytes(pkt[Raw].load)
@@ -95,6 +97,8 @@ class CaptureState:
             except UnicodeDecodeError:
                 payload = base64.b64encode(raw_bytes).decode("utf-8")
                 is_plain_text = False
+            # Always provide a "best effort" plain-text view for visibility.
+            payload_text = raw_bytes.decode("utf-8", errors="replace")
 
         now = time.time()
         row = PacketRow(
@@ -107,6 +111,7 @@ class CaptureState:
             length=len(pkt),
             summary=pkt.summary(),
             payload=payload,
+            payload_text=payload_text,
             is_plain_text=is_plain_text,
         )
 

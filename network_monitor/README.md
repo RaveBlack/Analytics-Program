@@ -40,7 +40,7 @@ On Windows, packet capture via Scapy requires **Npcap** (recommended: install in
 Run (Linux/macOS needs sudo for capture):
 
 ```bash
-python terminal_app.py
+python main.py
 ```
 
 Keys:
@@ -103,10 +103,14 @@ python -m pip install pyinstaller
 3. Build:
 
 ```powershell
-pyinstaller --onefile --name NetMonTUI terminal_app.py
+pyinstaller --clean --noconfirm netmon.spec
 ```
 
 The `.exe` will be created in `dist\NetMonTUI.exe`.
+
+Alternatively:
+- `build_windows.ps1`
+- `build_windows.bat`
 
 ## Troubleshooting
 - **No Packets?** Ensure you are running with `sudo` or Administrator privileges. Regular users often cannot capture network traffic.
