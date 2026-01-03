@@ -38,6 +38,8 @@ class Packet:
     summary: str
     payload: str
     payload_text: str
+    emails: List[str]
+    secrets: List[Dict[str, str]]
     is_plain_text: bool
 
 
@@ -109,10 +111,22 @@ class NetMonTUI(App):
 
     #packets {
         height: 1fr;
+        width: 2fr;
+    }
+
+    #rightpane {
+        width: 1fr;
+        height: 1fr;
+        padding-left: 1;
+    }
+
+    #findings {
+        height: 12;
+        border: solid gray;
     }
 
     #payload {
-        height: 14;
+        height: 1fr;
         border: solid gray;
     }
 
@@ -169,17 +183,22 @@ class NetMonTUI(App):
                 yield Button("Quit", id="btn_quit", variant="error")
         with Container(id="statusbar"):
             yield Static("", id="status")
-        with Vertical(id="main"):
+        with Horizontal(id="main"):
             table = DataTable(id="packets")
             table.cursor_type = "row"
             yield table
-            yield TextArea(id="payload", read_only=True)
-            yield TextArea(id="log", read_only=True)
+            with Vertical(id="rightpane"):
+                yield TextArea(id="findings", read_only=True)
+                yield TextArea(id="payload", read_only=True)
+        yield TextArea(id="log", read_only=True)
         yield Footer()
 
     def on_mount(self) -> None:
         table = self.query_one("#packets", DataTable)
         table.add_columns("ID", "Time", "Src", "Dst", "Proto", "Len", "Info")
+
+        self.query_one("#findings", TextArea).text = "Findings (emails / secrets hashes) will appear here."
+        self.query_one("#payload", TextArea).text = "Select a packet to view Layer-7 plain text."
 
         self._log("Starting local backend…")
         self._start_backend_thread()
@@ -328,6 +347,8 @@ class NetMonTUI(App):
                 summary=str(p.get("summary", "")),
                 payload=str(p.get("payload", "")),
                 payload_text=str(p.get("payload_text", "")),
+                emails=list(p.get("emails", []) or []),
+                secrets=list(p.get("secrets", []) or []),
                 is_plain_text=bool(p.get("is_plain_text", False)),
             )
             self.last_packet_id = max(self.last_packet_id, pkt.id)
@@ -368,6 +389,26 @@ class NetMonTUI(App):
         area = self.query_one("#payload", TextArea)
         area.text = view[:20000]
         area.scroll_home(animate=False)
+
+        findings_lines: List[str] = []
+        if pkt.emails:
+            findings_lines.append("Emails:")
+            findings_lines.extend([f"- {e}" for e in pkt.emails[:20]])
+        if pkt.secrets:
+            if findings_lines:
+                findings_lines.append("")
+            findings_lines.append("Secrets (hashed):")
+            for s in pkt.secrets[:20]:
+                kind = s.get("kind", "secret")
+                key = s.get("key", "")
+                h = s.get("value_hash", "")
+                findings_lines.append(f"- {kind} {key}: {h}")
+        if not findings_lines:
+            findings_lines = ["No emails/secrets detected in this packet payload_text."]
+
+        farea = self.query_one("#findings", TextArea)
+        farea.text = "\n".join(findings_lines)[:20000]
+        farea.scroll_home(animate=False)
 
     def _require_target(self, title: str) -> None:
         """Prompt for target if missing; callback will continue action."""

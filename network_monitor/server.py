@@ -1,4 +1,6 @@
 import base64
+import hashlib
+import re
 import subprocess
 import sys
 import threading
@@ -34,6 +36,8 @@ class PacketRow:
     summary: str
     payload: str
     payload_text: str
+    emails: List[str]
+    secrets: List[Dict[str, str]]
     is_plain_text: bool
 
 
@@ -85,6 +89,63 @@ class CaptureState:
             return True
         return f == src or f == dst
 
+    def _analyze_payload_text(self, text: str) -> Tuple[List[str], List[Dict[str, str]]]:
+        # NOTE: This is best-effort pattern matching. We intentionally do NOT store
+        # raw sensitive values; we store only hashes for safety.
+        if not text:
+            return ([], [])
+
+        emails = []
+        email_re = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+        for m in email_re.finditer(text):
+            emails.append(m.group(0))
+            if len(emails) >= 10:
+                break
+
+        secrets: List[Dict[str, str]] = []
+
+        def add_secret(kind: str, key: str, value: str) -> None:
+            if not value:
+                return
+            value_bytes = value.encode("utf-8", errors="ignore")
+            digest = hashlib.sha256(value_bytes).hexdigest()
+            secrets.append({"kind": kind, "key": key, "value_hash": f"sha256:{digest}"})
+
+        # Common key/value patterns (querystrings, headers, logs, etc.)
+        kv_patterns = [
+            # password=..., passwd:..., pwd=...
+            (re.compile(r"(?i)\b(password|passwd|pwd|pass)\s*[:=]\s*([^\s&;\"'\\]{1,128})"), "password"),
+            # api_key=..., token=..., secret=...
+            (re.compile(r"(?i)\b(api[-_]?key|token|secret|sessionid)\s*[:=]\s*([^\s&;\"'\\]{1,256})"), "secret"),
+            # JSON fields: "password": "..."
+            (re.compile(r"(?i)\"(password|passwd|pwd)\"\s*:\s*\"([^\"]{1,256})\""), "password"),
+            (re.compile(r"(?i)\"(token|secret|api[-_]?key)\"\s*:\s*\"([^\"]{1,512})\""), "secret"),
+            # HTTP Basic auth header (store hash of the credential blob)
+            (re.compile(r"(?i)\bauthorization\s*:\s*basic\s+([A-Za-z0-9+/=]{8,})"), "basic_auth"),
+        ]
+
+        for rx, kind in kv_patterns:
+            for m in rx.finditer(text):
+                if kind == "basic_auth":
+                    add_secret("basic_auth", "authorization", m.group(1))
+                else:
+                    add_secret(kind, m.group(1), m.group(2))
+                if len(secrets) >= 10:
+                    break
+            if len(secrets) >= 10:
+                break
+
+        # Dedupe emails while preserving order
+        seen = set()
+        emails_deduped = []
+        for e in emails:
+            if e in seen:
+                continue
+            seen.add(e)
+            emails_deduped.append(e)
+
+        return (emails_deduped, secrets)
+
     def _on_packet(self, pkt) -> None:
         if IP is None:
             return
@@ -113,6 +174,8 @@ class CaptureState:
             # Always provide a "best effort" plain-text view for visibility.
             payload_text = raw_bytes.decode("utf-8", errors="replace")
 
+        emails, secrets = self._analyze_payload_text(payload_text)
+
         now = time.time()
         row = PacketRow(
             id=0,
@@ -125,6 +188,8 @@ class CaptureState:
             summary=pkt.summary(),
             payload=payload,
             payload_text=payload_text,
+            emails=emails,
+            secrets=secrets,
             is_plain_text=is_plain_text,
         )
 
