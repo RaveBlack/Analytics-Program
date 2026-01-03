@@ -47,6 +47,7 @@ def packet_callback(packet):
             protocol = "ICMP"
 
         payload = ""
+        payload_text = "[No L7 payload]"
         is_plain_text = False
         raw_bytes = b""
         
@@ -62,6 +63,8 @@ def packet_callback(packet):
                 # The frontend can then decide to show it as Hex or try other decodings
                 payload = base64.b64encode(raw_bytes).decode('utf-8')
                 is_plain_text = False
+            # Always provide a best-effort plain text view
+            payload_text = raw_bytes.decode("utf-8", errors="replace")
         
         pkt_data = {
             'timestamp': time.strftime('%H:%M:%S', time.localtime()),
@@ -70,6 +73,7 @@ def packet_callback(packet):
             'protocol': protocol,
             'length': len(packet),
             'payload': payload,
+            'payload_text': payload_text,
             'is_plain_text': is_plain_text,
             'summary': packet.summary()
         }

@@ -135,7 +135,7 @@
         if (!selectedPacket) return;
         const container = document.getElementById('packetDetail');
         
-        if (!selectedPacket.payload) {
+        if (!selectedPacket.payload && !selectedPacket.payload_text) {
             container.innerText = "No Layer 7 Payload (Empty)";
             return;
         }
@@ -146,16 +146,8 @@
         // If it was binary, payload is base64 string.
         
         if (currentView === 'text') {
-            if (selectedPacket.is_plain_text) {
-                content = selectedPacket.payload;
-            } else {
-                // Try to decode base64 to text, showing placeholder if binary
-                try {
-                    content = atob(selectedPacket.payload);
-                } catch (e) {
-                    content = "[Binary Data - Switch to Hex View]";
-                }
-            }
+            // Always show best-effort plain text (backend provides payload_text)
+            content = selectedPacket.payload_text || "";
         } else if (currentView === 'base64') {
             if (selectedPacket.is_plain_text) {
                 content = btoa(selectedPacket.payload);
