@@ -47,7 +47,7 @@ def packet_callback(packet):
             protocol = "ICMP"
 
         payload = ""
-        payload_text = ""
+        payload_text = "[No L7 payload]"
         is_plain_text = False
         raw_bytes = b""
         

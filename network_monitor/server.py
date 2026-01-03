@@ -87,7 +87,7 @@ class CaptureState:
 
         raw_bytes = b""
         payload = ""
-        payload_text = ""
+        payload_text = "[No L7 payload]"
         is_plain_text = False
         if Raw in pkt:
             raw_bytes = bytes(pkt[Raw].load)
