@@ -13,6 +13,7 @@ This is a local network traffic monitor application that works like a simplified
 - **Device List**: Shows devices from your OS ARP/neighbor cache (passive; no scanning).
 - **Device Discovery (Safe)**: Optional controlled **ping sweep** on your **private LAN** to help populate the ARP/neighbor cache, then displays discovered entries.
 - **Router Leases Import (Optional)**: Upload a router DHCP leases export (CSV or OpenWrt `dhcp.leases`) and merge it with neighbor/ARP data. Download merged devices as CSV.
+- **Remote Control (Agents)**: (Your devices only) Optional agent that can connect back to the dashboard and accept **authorized** commands like shutdown.
 
 ## Prerequisites
 - Python 3.x installed on your device.
@@ -21,6 +22,8 @@ This is a local network traffic monitor application that works like a simplified
 - Optional: **Wireshark / tshark** installed (for file captures).
 
 > This project is intended for monitoring and troubleshooting **networks you own or have explicit permission to test**.
+>
+> Remote shutdown is only supported for devices **you control** by running an agent on them. There is no “shutdown by IP” feature.
 
 ## Installation
 
@@ -61,6 +64,34 @@ This is a local network traffic monitor application that works like a simplified
      - **Device discovery**: Runs a limited ping sweep on your local private subnet, then shows the neighbor/ARP table.
      - **Router leases import**: Upload your router’s DHCP leases export to get a more complete “who’s connected” list, then use “Download CSV”.
      - **Captures (tshark)**: Start a duration-limited capture and then download the resulting `.pcapng`.
+     - **Remote control (agents)**: Run `agent.py` on a device you own, then refresh “Agents” and (optionally) issue shutdown.
+
+## Remote control agent setup (your devices only)
+
+The agent connects to the server over Socket.IO and will only execute shutdown when explicitly enabled.
+
+### Server hardening (recommended)
+- Set an admin key for shutdown requests:
+  - `ADMIN_API_KEY=<strong secret>`
+- Set an agent shared key (so only your agents can register):
+  - `AGENT_SHARED_KEY=<strong secret>`
+- Access the dashboard remotely via **VPN** (Tailscale/WireGuard) rather than exposing port 5000 to the public internet.
+
+### Run agent on a device
+
+- **Windows (PowerShell as Administrator)**:
+  - Set env vars and run:
+    - `setx SERVER_URL "http://<your-server-ip>:5000"`
+    - `setx AGENT_ID "my-pc-1"`
+    - `setx AGENT_SHARED_KEY "<same as server>"`
+    - `setx ENABLE_SHUTDOWN "1"`
+  - Then start:
+    - `python agent.py`
+
+- **Linux/macOS**:
+  - `SERVER_URL="http://<your-server-ip>:5000" AGENT_ID="my-pc-1" AGENT_SHARED_KEY="<same as server>" ENABLE_SHUTDOWN=1 python3 agent.py`
+
+> The UI will prompt you to type `SHUTDOWN` before sending the command. The agent will refuse to power off unless `ENABLE_SHUTDOWN=1` is set on that machine.
 
 ## Wireshark / tshark setup
 

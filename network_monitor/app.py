@@ -51,6 +51,10 @@ _discover_job: Dict[str, Any] = {"running": False, "started_at": None, "finished
 _discover_results: List[Dict[str, Any]] = []
 _router_leases: List[Dict[str, str]] = []
 
+# Remote agent registry (for your own devices only)
+# agent_id -> metadata (and current socket sid)
+_agents: Dict[str, Dict[str, Any]] = {}
+
 
 def _which(cmd: str) -> Optional[str]:
     return shutil.which(cmd)
@@ -97,6 +101,19 @@ def _run_command(args: List[str], timeout_s: int = 15) -> Tuple[int, str]:
         return 124, (out or "") + "\n[timeout]\n"
     except FileNotFoundError:
         return 127, f"[not found] {args[0]}\n"
+
+
+def _require_admin_api_key() -> Optional[Tuple[Response, int]]:
+    """
+    If ADMIN_API_KEY is set, require header X-API-Key to match.
+    """
+    required = os.getenv("ADMIN_API_KEY", "").strip()
+    if not required:
+        return None
+    got = (request.headers.get("X-API-Key") or "").strip()
+    if got != required:
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    return None
 
 
 def _list_interfaces() -> List[Dict[str, str]]:
@@ -696,6 +713,7 @@ def health():
             "time": datetime.utcnow().isoformat() + "Z",
             "tshark_available": bool(_which("tshark")),
             "platform": platform.platform(),
+            "admin_api_key_required": bool(os.getenv("ADMIN_API_KEY", "").strip()),
         }
     )
 
@@ -778,6 +796,93 @@ def api_devices_merged_csv():
         )
     body = "\n".join(lines) + "\n"
     return Response(body, mimetype="text/csv", headers={"Content-Disposition": "attachment; filename=devices_merged.csv"})
+
+@app.route('/api/agents')
+def api_agents():
+    return jsonify(
+        {
+            "agents": [
+                {k: v for k, v in a.items() if k != "sid"}
+                for a in _agents.values()
+            ]
+        }
+    )
+
+
+@app.route('/api/agents/shutdown', methods=['POST'])
+def api_agents_shutdown():
+    auth = _require_admin_api_key()
+    if auth:
+        return auth
+    data = request.get_json(silent=True) or {}
+    agent_id = str(data.get("agent_id", "")).strip()
+    confirm = str(data.get("confirm", "")).strip()
+    if confirm != "SHUTDOWN":
+        return jsonify({"ok": False, "error": "Confirmation required. Set confirm=SHUTDOWN"}), 400
+    agent = _agents.get(agent_id)
+    if not agent:
+        return jsonify({"ok": False, "error": "Unknown agent_id"}), 404
+    room = f"agent:{agent_id}"
+    socketio.emit(
+        "agent_command",
+        {"command": "shutdown", "issued_at": datetime.utcnow().isoformat() + "Z"},
+        to=room,
+        namespace="/agent",
+    )
+    return jsonify({"ok": True})
+
+
+@socketio.on("connect", namespace="/agent")
+def agent_connect():
+    # Agent must register after connect
+    emit("agent_status", {"msg": "connected", "time": datetime.utcnow().isoformat() + "Z"})
+
+
+@socketio.on("disconnect", namespace="/agent")
+def agent_disconnect():
+    sid = request.sid
+    # remove sid from any agent
+    for agent_id, meta in list(_agents.items()):
+        if meta.get("sid") == sid:
+            meta["online"] = False
+            meta["last_seen"] = datetime.utcnow().isoformat() + "Z"
+            meta.pop("sid", None)
+            break
+
+
+@socketio.on("register", namespace="/agent")
+def agent_register(data):
+    """
+    Agent registration requires shared secret AGENT_SHARED_KEY (env var) if set.
+    """
+    required = os.getenv("AGENT_SHARED_KEY", "").strip()
+    provided = str((data or {}).get("shared_key", "")).strip()
+    if required and provided != required:
+        emit("agent_status", {"msg": "unauthorized"})
+        return
+
+    agent_id = str((data or {}).get("agent_id", "")).strip()
+    if not agent_id or len(agent_id) > 64:
+        emit("agent_status", {"msg": "invalid_agent_id"})
+        return
+
+    meta = {
+        "agent_id": agent_id,
+        "hostname": str((data or {}).get("hostname", "")).strip(),
+        "platform": str((data or {}).get("platform", "")).strip(),
+        "local_ips": (data or {}).get("local_ips") or [],
+        "online": True,
+        "last_seen": datetime.utcnow().isoformat() + "Z",
+        "sid": request.sid,
+    }
+    _agents[agent_id] = meta
+    # join room for targeted commands
+    try:
+        from flask_socketio import join_room
+        join_room(f"agent:{agent_id}")
+    except Exception:
+        pass
+    emit("agent_status", {"msg": "registered", "agent_id": agent_id})
 
 @app.route('/api/discover/start', methods=['POST'])
 def api_discover_start():
