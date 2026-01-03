@@ -11,6 +11,7 @@ This is a local network traffic monitor application that works like a simplified
 - **Permissioned Diagnostics**: Ping + traceroute buttons from the web UI.
 - **Wireshark CLI Captures**: Start/stop duration-limited captures using `tshark`, list and download capture files.
 - **Device List**: Shows devices from your OS ARP/neighbor cache (passive; no scanning).
+- **Device Discovery (Safe)**: Optional controlled **ping sweep** on your **private LAN** to help populate the ARP/neighbor cache, then displays discovered entries.
 
 ## Prerequisites
 - Python 3.x installed on your device.
@@ -56,6 +57,7 @@ This is a local network traffic monitor application that works like a simplified
    - **Tools panel**:
      - **Ping / Traceroute**: Run basic diagnostics and see the output in the page.
      - **Devices**: View ARP/neighbor-cache entries (may be empty until your machine talks to devices).
+     - **Device discovery**: Runs a limited ping sweep on your local private subnet, then shows the neighbor/ARP table.
      - **Captures (tshark)**: Start a duration-limited capture and then download the resulting `.pcapng`.
 
 ## Wireshark / tshark setup
@@ -70,3 +72,4 @@ This is a local network traffic monitor application that works like a simplified
 - **No Packets?** Ensure you are running with `sudo` or Administrator privileges. Regular users often cannot capture network traffic.
 - **Address in use?** If port 5000 is taken, edit `app.py` and change the port number at the bottom of the file.
 - **tshark missing?** The Tools panel will show `tshark: missing` until Wireshark/tshark is installed and on `PATH`.
+- **Discovery didn’t find devices?** Many devices block ICMP/ping. Discovery relies on ping to help populate ARP/neighbor tables, so results vary. For an authoritative list, use your router’s **DHCP leases/connected clients** page.

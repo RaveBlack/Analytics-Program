@@ -96,6 +96,18 @@
                         None
                     </div>
                 </div>
+                <div class="col-lg-6">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <label class="form-label mb-1">Device discovery (ping → neighbor cache)</label>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-outline-primary" onclick="startDiscovery()">Discover</button>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="loadDiscoveryResults()">Load results</button>
+                        </div>
+                    </div>
+                    <div class="border rounded p-2 bg-light" style="height: 160px; overflow:auto; font-family: monospace; font-size: 0.85em;" id="discoverBox">
+                        Click “Discover” to ping a limited set of IPs on your local private subnet, then view the neighbor/ARP table.
+                    </div>
+                </div>
                 <div class="col-12">
                     <label class="form-label mb-1">Command output</label>
                     <pre class="border rounded p-2" style="height: 200px; overflow:auto; background:#111; color:#eee;" id="cmdOut">Ready.</pre>
@@ -469,6 +481,60 @@
             box.textContent = `Error: ${e.message}`;
         }
     }
+
+    function renderDiscoveredDevices(payload) {
+        const box = document.getElementById('discoverBox');
+        const devices = (payload && payload.devices) ? payload.devices : [];
+        if (!devices.length) {
+            box.textContent = '(no devices returned yet — try Discover again, or your devices may block ICMP)';
+            return;
+        }
+        box.textContent = devices
+            .map(d => `${d.ip || ''}\t${d.mac || ''}\t${d.iface || ''}\t${d.state || ''}`.trim())
+            .join('\n');
+    }
+
+    async function startDiscovery() {
+        const box = document.getElementById('discoverBox');
+        box.textContent = 'Detecting local network and starting discovery...';
+        try {
+            const info = await fetchJson('/api/network/info');
+            const nets = info.networks || [];
+            const cidr = nets.length ? nets[0].cidr : '';
+            const res = await fetchJson('/api/discover/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cidr, max_hosts: 128 })
+            });
+            box.textContent = `Discovery started on ${res.cidr} (max_hosts=${res.max_hosts}).\nWaiting for results...`;
+        } catch (e) {
+            box.textContent = `Error: ${e.message}`;
+        }
+    }
+
+    async function loadDiscoveryResults() {
+        const box = document.getElementById('discoverBox');
+        box.textContent = 'Loading discovery results...';
+        try {
+            const data = await fetchJson('/api/discover/results');
+            renderDiscoveredDevices(data);
+        } catch (e) {
+            box.textContent = `Error: ${e.message}`;
+        }
+    }
+
+    // Live updates for discovery
+    socket.on('discover_status', (data) => {
+        const box = document.getElementById('discoverBox');
+        if (!box) return;
+        if (data.running && data.progress) {
+            box.textContent = `Discovery running... ${data.progress}/${data.max_hosts || ''}`;
+        }
+    });
+
+    socket.on('discover_results', (data) => {
+        renderDiscoveredDevices(data);
+    });
 
     function renderMitmSummary(summary) {
         const box = document.getElementById('mitmBox');

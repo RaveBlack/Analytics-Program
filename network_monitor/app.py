@@ -46,6 +46,10 @@ _ip_to_macs: Dict[str, set] = {}
 _gateway_ip_last: Optional[str] = None
 _gateway_mac_last: Optional[str] = None
 
+# Device discovery (controlled ping sweep -> populate ARP/neighbor cache)
+_discover_job: Dict[str, Any] = {"running": False, "started_at": None, "finished_at": None}
+_discover_results: List[Dict[str, Any]] = []
+
 
 def _which(cmd: str) -> Optional[str]:
     return shutil.which(cmd)
@@ -180,6 +184,136 @@ def _list_neighbor_devices() -> List[Dict[str, str]]:
         return devices
 
     return devices
+
+
+def _is_private_v4(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+        return addr.version == 4 and addr.is_private
+    except ValueError:
+        return False
+
+
+def _get_local_ipv4_networks() -> List[Dict[str, str]]:
+    """
+    Best-effort detection of locally configured IPv4 networks.
+    Returns items like: {"iface": "...", "cidr": "192.168.1.0/24", "ip": "192.168.1.10"}
+    """
+    sysname = platform.system().lower()
+    nets: List[Dict[str, str]] = []
+
+    if sysname == "windows":
+        rc, out = _run_command(["ipconfig"], timeout_s=10)
+        if rc != 0:
+            return []
+        current_iface = ""
+        ip_val = ""
+        mask_val = ""
+        for line in out.splitlines():
+            line = line.rstrip()
+            # "Wireless LAN adapter Wi-Fi:" / "Ethernet adapter Ethernet:"
+            m_iface = re.match(r"^[A-Za-z].*adapter\s+(.+):\s*$", line.strip())
+            if m_iface:
+                current_iface = m_iface.group(1).strip()
+                ip_val = ""
+                mask_val = ""
+                continue
+            m_ip = re.search(r"IPv4 Address[.\s]*:\s*(\d{1,3}(?:\.\d{1,3}){3})", line)
+            if m_ip:
+                ip_val = m_ip.group(1)
+                continue
+            m_mask = re.search(r"Subnet Mask[.\s]*:\s*(\d{1,3}(?:\.\d{1,3}){3})", line)
+            if m_mask:
+                mask_val = m_mask.group(1)
+            if current_iface and ip_val and mask_val:
+                try:
+                    net = ipaddress.IPv4Network(f"{ip_val}/{mask_val}", strict=False)
+                    nets.append({"iface": current_iface, "cidr": str(net), "ip": ip_val})
+                except ValueError:
+                    pass
+                ip_val = ""
+                mask_val = ""
+        # Prefer private nets first
+        nets.sort(key=lambda x: 0 if _is_private_v4(x["ip"]) else 1)
+        return nets
+
+    # Linux/macOS: ip -o -f inet addr show
+    if _which("ip"):
+        rc, out = _run_command(["ip", "-o", "-f", "inet", "addr", "show"], timeout_s=10)
+        if rc != 0:
+            return []
+        # "2: eth0    inet 192.168.1.10/24 brd ... scope global eth0"
+        for line in out.splitlines():
+            m = re.match(r"^\d+:\s+(?P<iface>\S+)\s+inet\s+(?P<cidr>\d{1,3}(?:\.\d{1,3}){3}/\d+)\b", line.strip())
+            if not m:
+                continue
+            iface = m.group("iface")
+            cidr = m.group("cidr")
+            try:
+                net = ipaddress.IPv4Network(cidr, strict=False)
+                ip = cidr.split("/", 1)[0]
+                nets.append({"iface": iface, "cidr": str(net), "ip": ip})
+            except ValueError:
+                continue
+        nets.sort(key=lambda x: 0 if _is_private_v4(x["ip"]) else 1)
+        return nets
+
+    return nets
+
+
+def _ping_once(ip: str, timeout_ms: int = 350) -> Tuple[int, str]:
+    sysname = platform.system().lower()
+    if sysname == "windows":
+        # -n 1 = one echo, -w timeout in ms
+        return _run_command(["ping", "-n", "1", "-w", str(timeout_ms), ip], timeout_s=5)
+    # Linux/macOS: -c 1 one packet; -W is seconds on Linux, -t on mac varies.
+    # Use a short overall subprocess timeout and rely on it.
+    return _run_command(["ping", "-c", "1", "-n", ip], timeout_s=2)
+
+
+def _run_discovery(cidr: str, max_hosts: int) -> None:
+    """
+    Background job: ping a limited number of hosts in cidr to populate neighbor cache,
+    then return neighbor/ARP table as "connected-ish" devices.
+    """
+    global _discover_job, _discover_results
+    _discover_job = {"running": True, "started_at": datetime.utcnow().isoformat() + "Z", "finished_at": None, "cidr": cidr, "max_hosts": max_hosts}
+    _discover_results = []
+
+    try:
+        net = ipaddress.IPv4Network(cidr, strict=False)
+        count = 0
+        for host in net.hosts():
+            if count >= max_hosts:
+                break
+            ip = str(host)
+            # Only touch private ranges (safety guard)
+            if not _is_private_v4(ip):
+                continue
+            count += 1
+            _ping_once(ip)
+            if count % 16 == 0:
+                socketio.emit("discover_status", {"running": True, "progress": count, "max_hosts": max_hosts})
+                eventlet.sleep(0)
+
+        # After pings, read neighbor cache
+        devices = _list_neighbor_devices()
+        # Deduplicate by IP
+        seen = set()
+        results = []
+        for d in devices:
+            ip = (d.get("ip") or "").strip()
+            if not ip or ip in seen:
+                continue
+            seen.add(ip)
+            results.append(d)
+        _discover_results = results
+        socketio.emit("discover_results", {"devices": results, "cidr": cidr})
+    finally:
+        _discover_job["running"] = False
+        _discover_job["finished_at"] = datetime.utcnow().isoformat() + "Z"
+        socketio.emit("discover_status", {"running": False, "finished_at": _discover_job["finished_at"]})
+
 
 
 def _get_default_gateway_ip() -> Optional[str]:
@@ -440,10 +574,59 @@ def health():
 def api_interfaces():
     return jsonify({"interfaces": _list_interfaces()})
 
+@app.route('/api/network/info')
+def api_network_info():
+    nets = _get_local_ipv4_networks()
+    return jsonify({"networks": nets, "default_gateway": _get_default_gateway_ip() or ""})
+
 
 @app.route('/api/devices')
 def api_devices():
     return jsonify({"devices": _list_neighbor_devices()})
+
+@app.route('/api/discover/start', methods=['POST'])
+def api_discover_start():
+    """
+    Starts a controlled ping sweep on a private local subnet (defaults to first detected private network).
+    This is NOT port scanning; it only tries ICMP echo to populate ARP/neighbor cache.
+    """
+    global _discover_job
+    if _discover_job.get("running"):
+        return jsonify({"ok": True, "running": True, "job": _discover_job})
+
+    data = request.get_json(silent=True) or {}
+    cidr = str(data.get("cidr", "") or "").strip()
+    max_hosts = int(data.get("max_hosts", 128) or 128)
+    max_hosts = max(16, min(max_hosts, 512))
+
+    if not cidr:
+        nets = _get_local_ipv4_networks()
+        if not nets:
+            return jsonify({"ok": False, "error": "Could not detect local networks. Provide cidr manually."}), 400
+        cidr = nets[0]["cidr"]
+
+    try:
+        net = ipaddress.IPv4Network(cidr, strict=False)
+    except ValueError:
+        return jsonify({"ok": False, "error": "Invalid cidr. Example: 192.168.1.0/24"}), 400
+
+    # Safety: only allow RFC1918 private networks and keep jobs bounded
+    if not net.is_private:
+        return jsonify({"ok": False, "error": "Only private (RFC1918) networks are allowed."}), 400
+
+    # Spawn background job (non-blocking)
+    eventlet.spawn_n(_run_discovery, str(net), max_hosts)
+    return jsonify({"ok": True, "running": True, "cidr": str(net), "max_hosts": max_hosts})
+
+
+@app.route('/api/discover/status')
+def api_discover_status():
+    return jsonify({"job": _discover_job})
+
+
+@app.route('/api/discover/results')
+def api_discover_results():
+    return jsonify({"devices": _discover_results, "job": _discover_job})
 
 @app.route('/api/mitm/summary')
 def api_mitm_summary():
