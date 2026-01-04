@@ -30,6 +30,24 @@ pip install -r controller_turbo_windows\requirements.txt
 
 ---
 
+### Build a standalone EXE (PyInstaller)
+
+This produces `dist\turbo_pad_win.exe`.
+
+PowerShell:
+
+```powershell
+.\controller_turbo_windows\build.ps1
+```
+
+Or CMD:
+
+```bat
+controller_turbo_windows\build.bat
+```
+
+---
+
 ### List controllers
 
 ```powershell
