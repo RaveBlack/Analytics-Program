@@ -18,7 +18,7 @@ echo Installing build deps...
 pip install -r controller_turbo_windows\requirements-build.txt || exit /b 1
 
 echo Building exe with PyInstaller...
-pyinstaller --noconfirm --clean --onefile --name turbo_pad_win --hidden-import inputs --hidden-import vgamepad controller_turbo_windows\turbo_pad_win.py || exit /b 1
+pyinstaller --noconfirm --clean --onefile --name turbo_pad_win --hidden-import inputs --hidden-import vgamepad controller_turbo_windows\main.py || exit /b 1
 
 echo.
 echo Built: dist\turbo_pad_win.exe

@@ -24,7 +24,7 @@ pyinstaller `
   --name turbo_pad_win `
   --hidden-import inputs `
   --hidden-import vgamepad `
-  controller_turbo_windows\turbo_pad_win.py
+  controller_turbo_windows\main.py
 
 Write-Host ""
 Write-Host "Built: dist\turbo_pad_win.exe"

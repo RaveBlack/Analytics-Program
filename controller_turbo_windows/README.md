@@ -51,7 +51,7 @@ controller_turbo_windows\build.bat
 ### List controllers
 
 ```powershell
-py controller_turbo_windows\turbo_pad_win.py --list
+py controller_turbo_windows\main.py --list
 ```
 
 ---
@@ -61,19 +61,19 @@ py controller_turbo_windows\turbo_pad_win.py --list
 Auto-tap A/B/X/Y at 0.1s:
 
 ```powershell
-py controller_turbo_windows\turbo_pad_win.py --interval 0.1 --auto BTN_SOUTH BTN_EAST BTN_WEST BTN_NORTH
+py controller_turbo_windows\main.py --interval 0.1 --auto BTN_SOUTH BTN_EAST BTN_WEST BTN_NORTH
 ```
 
 Auto-tap “all common buttons”:
 
 ```powershell
-py controller_turbo_windows\turbo_pad_win.py --interval 0.1 --auto-all
+py controller_turbo_windows\main.py --interval 0.1 --auto-all
 ```
 
 Pick a specific controller index from `--list`:
 
 ```powershell
-py controller_turbo_windows\turbo_pad_win.py --index 0 --auto-all
+py controller_turbo_windows\main.py --index 0 --auto-all
 ```
 
 ---
