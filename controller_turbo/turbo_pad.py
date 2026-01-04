@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Xbox/controller turbo + 10Hz analog sampling (Linux).
+Xbox/controller auto-tap (0.1s) + 10Hz analog sampling (Linux).
 
 Reads a physical controller via evdev and emits events through a virtual uinput device.
 
@@ -180,8 +180,11 @@ def run(
     if turbo_all:
         turbo_keys = set(all_keys)
 
-    held: Dict[int, bool] = {k: False for k in turbo_keys}
-    next_fire: Dict[int, float] = {k: 0.0 for k in turbo_keys}
+    # "Auto-tap" semantics:
+    # - On physical press: emit key down immediately, schedule key up after interval_s
+    # - While held: NO repeated pulses (user requested "1 press" not "10 presses/sec")
+    tap_release_at: Dict[int, float] = {}
+    tap_is_down: Dict[int, bool] = {k: False for k in turbo_keys}
 
     axis_state: Dict[int, int] = {}
     next_axes_emit = 0.0
@@ -192,7 +195,7 @@ def run(
         keys_pretty = ", ".join(sorted((_format_code(k) for k in turbo_keys)))
     else:
         keys_pretty = "(none)"
-    print(f"Turbo keys: {keys_pretty}", file=sys.stderr)
+    print(f"Auto-tap keys: {keys_pretty}", file=sys.stderr)
     print(f"Interval: {interval_s:.3f}s", file=sys.stderr)
     if grab:
         print("Mode: grab enabled (real device hidden from apps)", file=sys.stderr)
@@ -225,12 +228,16 @@ def run(
                         code = int(event.code)
                         if code in turbo_keys:
                             if _is_press(int(event.value)):
-                                held[code] = True
-                                # Fire immediately, then keep firing on the interval.
-                                next_fire[code] = now
+                                # Begin a synthetic tap.
+                                if not tap_is_down.get(code, False):
+                                    ui.write(ecodes.EV_KEY, code, 1)
+                                    ui.syn()
+                                    tap_is_down[code] = True
+                                tap_release_at[code] = now + interval_s
                             else:
-                                held[code] = False
-                            continue  # swallow original event for turbo keys
+                                # Swallow physical release; we control release timing.
+                                pass
+                            continue
 
                         # passthrough for non-turbo keys
                         ui.write(event.type, event.code, event.value)
@@ -249,21 +256,19 @@ def run(
                     ui.write(event.type, event.code, event.value)
                     ui.syn()
 
-            # Tick: emit turbo pulses + (optional) 10Hz analog forwarding.
+            # Tick: release pending auto-taps + (optional) 10Hz analog forwarding.
             did_anything = False
 
-            # Turbo pulses
-            for code, is_held in held.items():
-                if not is_held:
-                    continue
-                if now + 1e-9 < next_fire[code]:
-                    continue
-                # Emit a pulse (down then up). Many games treat this as a tap.
-                ui.write(ecodes.EV_KEY, code, 1)
-                ui.write(ecodes.EV_KEY, code, 0)
-                did_anything = True
-                # Schedule next pulse
-                next_fire[code] = max(next_fire[code] + interval_s, now + interval_s)
+            # Auto-tap releases
+            if tap_release_at:
+                # Copy items so we can delete while iterating.
+                for code, release_at in list(tap_release_at.items()):
+                    if now + 1e-9 < release_at:
+                        continue
+                    ui.write(ecodes.EV_KEY, code, 0)
+                    did_anything = True
+                    tap_release_at.pop(code, None)
+                    tap_is_down[code] = False
 
             # Analog sampling
             if analog_10hz and now + 1e-9 >= next_axes_emit:
@@ -294,7 +299,9 @@ def run(
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    p = argparse.ArgumentParser(description="Turbo (10Hz) virtual controller for Linux (evdev/uinput).")
+    p = argparse.ArgumentParser(
+        description="Auto-tap (single fast press) virtual controller for Linux (evdev/uinput)."
+    )
     p.add_argument("--list", action="store_true", help="List available /dev/input/event* devices and exit.")
     p.add_argument("--device", help="Input device path, e.g. /dev/input/event17")
     p.add_argument("--name", help="Pick the first input device whose name contains this substring (case-insensitive).")
@@ -302,18 +309,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--interval",
         type=float,
         default=0.1,
-        help="Turbo/analog interval in seconds (default: 0.1 = 10Hz).",
+        help="Tap duration / analog sampling interval in seconds (default: 0.1).",
     )
     p.add_argument(
         "--turbo",
         nargs="*",
         default=[],
-        help="Key names to turbo (e.g. BTN_SOUTH BTN_EAST). You can also pass numeric codes.",
+        help="Key names to auto-tap (e.g. BTN_SOUTH BTN_EAST). You can also pass numeric codes.",
     )
     p.add_argument(
         "--turbo-all",
         action="store_true",
-        help="Turbo all EV_KEY buttons reported by the device.",
+        help="Auto-tap all EV_KEY buttons reported by the device.",
     )
     p.add_argument(
         "--no-grab",
