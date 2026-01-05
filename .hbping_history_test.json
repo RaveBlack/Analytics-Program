@@ -1,0 +1,26 @@
+{
+  "runs": [
+    {
+      "timestamp": 1767645970,
+      "target": "127.0.0.1",
+      "iface": "lo",
+      "ping_interval_s": 1.0,
+      "sent": 0,
+      "received": 0,
+      "loss_pct": 0.0,
+      "rtt_ms": {
+        "min": null,
+        "avg": null,
+        "max": null
+      },
+      "max_iface_mbps": {
+        "rx": 0.0,
+        "tx": 0.0
+      },
+      "alerts_mbps": {
+        "min": 50.0,
+        "max": 900.0
+      }
+    }
+  ]
+}
