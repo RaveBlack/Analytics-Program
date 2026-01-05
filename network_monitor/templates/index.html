@@ -20,8 +20,121 @@
 <body>
 
 <div class="container-fluid mt-3">
-    <h3><span class="badge bg-primary">L7</span> Traffic Monitor</h3>
+    <h3><span class="badge bg-primary">L7</span> Traffic Monitor <span class="badge bg-secondary">FTP Only</span></h3>
     
+    <!-- Tools Panel -->
+    <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span>Tools (Wi‑Fi only • permissioned diagnostics + Wireshark CLI)</span>
+            <span class="text-muted small" id="healthMsg">Checking capabilities...</span>
+        </div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-lg-3">
+                    <label class="form-label">Interface</label>
+                    <select class="form-select" id="ifaceSelect"></select>
+                    <div class="form-text">Used for `tshark` captures (if installed).</div>
+                </div>
+                <div class="col-lg-3">
+                    <label class="form-label">Ping host</label>
+                    <div class="input-group">
+                        <input class="form-control" id="pingHost" placeholder="e.g. 8.8.8.8 or router.local">
+                        <button class="btn btn-outline-primary" onclick="doPing()">Ping</button>
+                    </div>
+                </div>
+                <div class="col-lg-3">
+                    <label class="form-label">Traceroute host</label>
+                    <div class="input-group">
+                        <input class="form-control" id="traceHost" placeholder="e.g. 1.1.1.1">
+                        <button class="btn btn-outline-primary" onclick="doTrace()">Trace</button>
+                    </div>
+                </div>
+                <div class="col-lg-3">
+                    <label class="form-label">Wireshark capture</label>
+                    <div class="input-group">
+                        <input class="form-control" id="captureDuration" type="number" min="5" max="300" value="30">
+                        <span class="input-group-text">sec</span>
+                        <button class="btn btn-outline-success" onclick="startCapture()">Start</button>
+                        <button class="btn btn-outline-danger" onclick="stopCapture()">Stop</button>
+                    </div>
+                    <div class="form-text">Captures are duration-limited and saved to disk.</div>
+                </div>
+            </div>
+
+            <div class="row g-3 mt-1">
+                <div class="col-lg-6">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <label class="form-label mb-1">Device list (from ARP/neighbor cache)</label>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="refreshDevices()">Refresh</button>
+                    </div>
+                    <div class="border rounded p-2 bg-light" style="height: 160px; overflow:auto; font-family: monospace; font-size: 0.85em;" id="devicesBox">
+                        Loading...
+                    </div>
+                </div>
+                <div class="col-lg-6">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <label class="form-label mb-1">MITM checks (passive)</label>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-outline-primary" onclick="runMitmCheck()">Run MITM Check</button>
+                            <button class="btn btn-sm btn-outline-success" onclick="startArpMonitor()">Start ARP monitor</button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="stopArpMonitor()">Stop</button>
+                        </div>
+                    </div>
+                    <div class="border rounded p-2" style="height: 160px; overflow:auto; font-family: monospace; font-size: 0.85em; background:#fff3cd;" id="mitmBox">
+                        Click “Run MITM Check” to see indicators (gateway MAC change, duplicate IP mappings, ARP conflicts).
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-3 mt-1">
+                <div class="col-lg-6">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <label class="form-label mb-1">Captures</label>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="refreshCaptures()">Refresh</button>
+                    </div>
+                    <div class="border rounded p-2 bg-light" style="height: 160px; overflow:auto; font-family: monospace; font-size: 0.85em;" id="capturesBox">
+                        None
+                    </div>
+                </div>
+                <div class="col-lg-6">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <label class="form-label mb-1">Device discovery (ping → neighbor cache)</label>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-outline-primary" onclick="startDiscovery()">Discover</button>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="loadDiscoveryResults()">Load results</button>
+                        </div>
+                    </div>
+                    <div class="border rounded p-2 bg-light" style="height: 160px; overflow:auto; font-family: monospace; font-size: 0.85em;" id="discoverBox">
+                        Click “Discover” to ping a limited set of IPs on your local private subnet, then view the neighbor/ARP table.
+                    </div>
+                </div>
+                <div class="col-12">
+                    <label class="form-label mb-1">Command output</label>
+                    <pre class="border rounded p-2" style="height: 200px; overflow:auto; background:#111; color:#eee;" id="cmdOut">Ready.</pre>
+                </div>
+            </div>
+
+            <div class="row g-3 mt-1">
+                <div class="col-lg-6">
+                    <label class="form-label mb-1">Router DHCP leases import (optional)</label>
+                    <div class="d-flex gap-2 align-items-center">
+                        <input type="file" class="form-control form-control-sm" id="leaseFile" />
+                        <button class="btn btn-sm btn-outline-primary" onclick="uploadLeases()">Upload</button>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="loadMergedDevices()">Show merged</button>
+                        <a class="btn btn-sm btn-outline-success" href="/api/devices/merged.csv" target="_blank">Download CSV</a>
+                    </div>
+                    <div class="form-text">Upload a router export CSV or OpenWrt-style <code>dhcp.leases</code> text.</div>
+                </div>
+                <div class="col-lg-6">
+                    <label class="form-label mb-1">Merged device list (router leases + neighbor cache)</label>
+                    <div class="border rounded p-2 bg-light" style="height: 160px; overflow:auto; font-family: monospace; font-size: 0.85em;" id="mergedBox">
+                        (upload leases, or just use discovery + devices list)
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Control Bar -->
     <div class="control-bar d-flex gap-2 align-items-center">
         <input type="text" id="ipFilter" class="form-control" placeholder="Filter by IP (e.g., 192.168.1.5)" style="max-width: 300px;">
@@ -60,9 +173,7 @@
         <div class="card-header d-flex justify-content-between align-items-center">
             <span>Packet Payload (L7)</span>
             <div class="btn-group btn-group-sm">
-                <button class="btn btn-outline-secondary active" onclick="setView('text')">Plain Text</button>
-                <button class="btn btn-outline-secondary" onclick="setView('hex')">Hex Dump</button>
-                <button class="btn btn-outline-secondary" onclick="setView('base64')">Base64</button>
+                <button class="btn btn-outline-secondary active" onclick="setView(event, 'text')">Plain Text</button>
             </div>
         </div>
         <div class="card-body p-0">
@@ -78,6 +189,7 @@
     let isSniffing = true;
     let selectedPacket = null;
     let currentView = 'text';
+    let currentCaptureId = null;
 
     // Socket Events
     socket.on('connect', () => {
@@ -140,50 +252,14 @@
             return;
         }
 
-        let content = "";
-        
-        // If it was plain text on backend, payload is string.
-        // If it was binary, payload is base64 string.
-        
-        if (currentView === 'text') {
-            if (selectedPacket.is_plain_text) {
-                content = selectedPacket.payload;
-            } else {
-                // Try to decode base64 to text, showing placeholder if binary
-                try {
-                    content = atob(selectedPacket.payload);
-                } catch (e) {
-                    content = "[Binary Data - Switch to Hex View]";
-                }
-            }
-        } else if (currentView === 'base64') {
-            if (selectedPacket.is_plain_text) {
-                content = btoa(selectedPacket.payload);
-            } else {
-                content = selectedPacket.payload;
-            }
-        } else if (currentView === 'hex') {
-            // Convert to hex
-            let rawStr = selectedPacket.is_plain_text ? selectedPacket.payload : atob(selectedPacket.payload);
-            content = stringToHex(rawStr);
-        }
-
-        container.innerText = content;
+        // Backend always sends plain text (UTF‑8 with replacement for undecodable bytes).
+        container.innerText = selectedPacket.payload;
     }
 
-    function stringToHex(str) {
-        let hex = '';
-        for(let i=0;i<str.length;i++) {
-            hex += ''+str.charCodeAt(i).toString(16).padStart(2, '0') + ' ';
-        }
-        return hex.toUpperCase();
-    }
-
-    function setView(view) {
-        currentView = view;
-        // Update button states
+    function setView(e, view) {
+        currentView = 'text';
         document.querySelectorAll('.btn-group button').forEach(b => b.classList.remove('active'));
-        event.target.classList.add('active');
+        if (e && e.target) e.target.classList.add('active');
         renderDetail();
     }
 
@@ -214,6 +290,335 @@
     function updateStatus(msg) {
         document.getElementById('statusMsg').innerText = msg;
     }
+
+    // Tools helpers
+    function setCmdOut(text) {
+        document.getElementById('cmdOut').textContent = text || '';
+    }
+
+    async function fetchJson(url, options) {
+        const res = await fetch(url, options);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            const msg = data && data.error ? data.error : `Request failed (${res.status})`;
+            throw new Error(msg);
+        }
+        return data;
+    }
+
+    async function initTools() {
+        try {
+            const health = await fetchJson('/api/health');
+            document.getElementById('healthMsg').textContent =
+                `tshark: ${health.tshark_available ? 'available' : 'missing'} • ${health.platform}`;
+        } catch (e) {
+            document.getElementById('healthMsg').textContent = 'Health check failed';
+        }
+
+        await refreshInterfaces();
+        await refreshDevices();
+        await refreshCaptures();
+    }
+
+    async function refreshInterfaces() {
+        const sel = document.getElementById('ifaceSelect');
+        sel.innerHTML = '';
+        try {
+            const data = await fetchJson('/api/interfaces');
+            const ifaces = data.interfaces || [];
+            if (!ifaces.length) {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = '(no interfaces found)';
+                sel.appendChild(opt);
+                return;
+            }
+            for (const i of ifaces) {
+                const opt = document.createElement('option');
+                opt.value = i.name;
+                opt.textContent = `${i.name} (${i.state || 'unknown'})`;
+                sel.appendChild(opt);
+            }
+        } catch (e) {
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = '(failed to load)';
+            sel.appendChild(opt);
+        }
+    }
+
+    async function refreshDevices() {
+        const box = document.getElementById('devicesBox');
+        box.textContent = 'Loading...';
+        try {
+            const data = await fetchJson('/api/devices');
+            const devs = data.devices || [];
+            if (!devs.length) {
+                box.textContent = '(no devices in neighbor/ARP cache yet)';
+                return;
+            }
+            box.textContent = devs
+                .map(d => `${d.ip || ''}\t${d.mac || ''}\t${d.iface || ''}\t${d.state || ''}`.trim())
+                .join('\n');
+        } catch (e) {
+            box.textContent = `Error: ${e.message}`;
+        }
+    }
+
+    async function doPing() {
+        const host = document.getElementById('pingHost').value;
+        setCmdOut('Running ping...');
+        try {
+            const data = await fetchJson('/api/ping', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ host, count: 4 })
+            });
+            setCmdOut(data.output || '');
+        } catch (e) {
+            setCmdOut(`Error: ${e.message}`);
+        }
+    }
+
+    async function doTrace() {
+        const host = document.getElementById('traceHost').value;
+        setCmdOut('Running traceroute...');
+        try {
+            const data = await fetchJson('/api/traceroute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ host, max_hops: 20 })
+            });
+            setCmdOut(data.output || '');
+        } catch (e) {
+            setCmdOut(`Error: ${e.message}`);
+        }
+    }
+
+    async function startCapture() {
+        const iface = document.getElementById('ifaceSelect').value;
+        const duration_seconds = parseInt(document.getElementById('captureDuration').value || '30', 10);
+        setCmdOut('Starting tshark capture...');
+        try {
+            const data = await fetchJson('/api/capture/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ interface: iface, duration_seconds })
+            });
+            currentCaptureId = data.capture_id;
+            setCmdOut(`Capture started: ${data.filename}\n(capture_id: ${currentCaptureId})`);
+            await refreshCaptures();
+        } catch (e) {
+            setCmdOut(`Error: ${e.message}`);
+        }
+    }
+
+    async function stopCapture() {
+        if (!currentCaptureId) {
+            setCmdOut('No active capture_id (start a capture first).');
+            return;
+        }
+        setCmdOut('Stopping capture...');
+        try {
+            await fetchJson('/api/capture/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ capture_id: currentCaptureId })
+            });
+            setCmdOut('Stop signal sent. (File will be finalized by tshark)');
+            currentCaptureId = null;
+            await refreshCaptures();
+        } catch (e) {
+            setCmdOut(`Error: ${e.message}`);
+        }
+    }
+
+    async function refreshCaptures() {
+        const box = document.getElementById('capturesBox');
+        box.textContent = 'Loading...';
+        try {
+            const data = await fetchJson('/api/capture/list');
+            const caps = data.captures || [];
+            if (!caps.length) {
+                box.textContent = '(no captures yet)';
+                return;
+            }
+            box.innerHTML = '';
+            for (const c of caps) {
+                const line = document.createElement('div');
+                const a = document.createElement('a');
+                a.href = `/api/capture/download/${encodeURIComponent(c.filename)}`;
+                a.textContent = c.filename;
+                a.className = 'me-2';
+                a.target = '_blank';
+                const meta = document.createElement('span');
+                meta.className = 'text-muted';
+                meta.textContent = `(${Math.round((c.size_bytes || 0) / 1024)} KB, ${c.modified_at || ''})`;
+                line.appendChild(a);
+                line.appendChild(meta);
+                box.appendChild(line);
+            }
+        } catch (e) {
+            box.textContent = `Error: ${e.message}`;
+        }
+    }
+
+    function renderDiscoveredDevices(payload) {
+        const box = document.getElementById('discoverBox');
+        const devices = (payload && payload.devices) ? payload.devices : [];
+        if (!devices.length) {
+            box.textContent = '(no devices returned yet — try Discover again, or your devices may block ICMP)';
+            return;
+        }
+        box.textContent = devices
+            .map(d => `${d.ip || ''}\t${d.mac || ''}\t${d.iface || ''}\t${d.state || ''}`.trim())
+            .join('\n');
+    }
+
+    async function startDiscovery() {
+        const box = document.getElementById('discoverBox');
+        box.textContent = 'Detecting local network and starting discovery...';
+        try {
+            const info = await fetchJson('/api/network/info');
+            const nets = info.networks || [];
+            const cidr = nets.length ? nets[0].cidr : '';
+            const res = await fetchJson('/api/discover/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cidr, max_hosts: 128 })
+            });
+            box.textContent = `Discovery started on ${res.cidr} (max_hosts=${res.max_hosts}).\nWaiting for results...`;
+        } catch (e) {
+            box.textContent = `Error: ${e.message}`;
+        }
+    }
+
+    async function loadDiscoveryResults() {
+        const box = document.getElementById('discoverBox');
+        box.textContent = 'Loading discovery results...';
+        try {
+            const data = await fetchJson('/api/discover/results');
+            renderDiscoveredDevices(data);
+        } catch (e) {
+            box.textContent = `Error: ${e.message}`;
+        }
+    }
+
+    async function uploadLeases() {
+        const fileInput = document.getElementById('leaseFile');
+        const box = document.getElementById('mergedBox');
+        if (!fileInput.files || !fileInput.files.length) {
+            box.textContent = 'Select a leases file first.';
+            return;
+        }
+        box.textContent = 'Uploading and parsing leases...';
+        try {
+            const fd = new FormData();
+            fd.append('file', fileInput.files[0]);
+            const res = await fetch('/api/router/leases/import', { method: 'POST', body: fd });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data && data.error ? data.error : `Upload failed (${res.status})`);
+            box.textContent = `Imported ${data.count} leases. Click “Show merged”.`;
+        } catch (e) {
+            box.textContent = `Error: ${e.message}`;
+        }
+    }
+
+    async function loadMergedDevices() {
+        const box = document.getElementById('mergedBox');
+        box.textContent = 'Loading merged device list...';
+        try {
+            const data = await fetchJson('/api/devices/merged');
+            const devices = data.devices || [];
+            if (!devices.length) {
+                box.textContent = '(no devices yet)';
+                return;
+            }
+            box.textContent = devices
+                .map(d => `${d.ip || ''}\t${d.mac || ''}\t${d.hostname || ''}\t${d.iface || ''}\t${d.state || ''}\t${d.sources || ''}`.trim())
+                .join('\n');
+        } catch (e) {
+            box.textContent = `Error: ${e.message}`;
+        }
+    }
+
+    // Live updates for discovery
+    socket.on('discover_status', (data) => {
+        const box = document.getElementById('discoverBox');
+        if (!box) return;
+        if (data.running && data.progress) {
+            box.textContent = `Discovery running... ${data.progress}/${data.max_hosts || ''}`;
+        }
+    });
+
+    socket.on('discover_results', (data) => {
+        renderDiscoveredDevices(data);
+    });
+
+    function renderMitmSummary(summary) {
+        const box = document.getElementById('mitmBox');
+        const indicators = summary.indicators || [];
+        const gw = summary.gateway_ip ? `${summary.gateway_ip} (${summary.gateway_mac || 'mac unknown'})` : '(unknown)';
+        const running = summary.arp_monitor_running ? 'running' : 'stopped';
+
+        if (!indicators.length) {
+            box.textContent = `No indicators detected right now.\nGateway: ${gw}\nARP monitor: ${running}`;
+            return;
+        }
+
+        const lines = [];
+        lines.push(`Gateway: ${gw}`);
+        lines.push(`ARP monitor: ${running}`);
+        lines.push('');
+        lines.push('Indicators:');
+        for (const ind of indicators) {
+            lines.push(`- [${(ind.severity || 'info').toUpperCase()}] ${ind.type}`);
+            if (ind.type === 'gateway_mac_changed' && ind.details) {
+                lines.push(`  gateway_ip=${ind.details.gateway_ip} old=${ind.details.old_mac} new=${ind.details.new_mac}`);
+            } else if (ind.type === 'duplicate_ip_mapping' && Array.isArray(ind.details)) {
+                for (const c of ind.details.slice(0, 8)) {
+                    lines.push(`  ip=${c.ip} macs=${(c.macs || []).join(',')}`);
+                }
+            }
+        }
+        box.textContent = lines.join('\n');
+    }
+
+    async function runMitmCheck() {
+        const box = document.getElementById('mitmBox');
+        box.textContent = 'Checking...';
+        try {
+            const summary = await fetchJson('/api/mitm/summary');
+            renderMitmSummary(summary);
+        } catch (e) {
+            box.textContent = `Error: ${e.message}`;
+        }
+    }
+
+    async function startArpMonitor() {
+        const box = document.getElementById('mitmBox');
+        box.textContent = 'Starting ARP monitor...';
+        try {
+            await fetchJson('/api/mitm/monitor/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            await runMitmCheck();
+        } catch (e) {
+            box.textContent = `Error: ${e.message}`;
+        }
+    }
+
+    async function stopArpMonitor() {
+        const box = document.getElementById('mitmBox');
+        box.textContent = 'Stopping ARP monitor...';
+        try {
+            await fetchJson('/api/mitm/monitor/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            await runMitmCheck();
+        } catch (e) {
+            box.textContent = `Error: ${e.message}`;
+        }
+    }
+
+    // Init tools on load
+    initTools();
 </script>
 
 </body>
