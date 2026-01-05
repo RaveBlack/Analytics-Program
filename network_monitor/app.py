@@ -13,9 +13,7 @@ import shutil
 import subprocess
 import time
 import json
-import base64
 import logging
-import secrets
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -51,16 +49,6 @@ _gateway_mac_last: Optional[str] = None
 _discover_job: Dict[str, Any] = {"running": False, "started_at": None, "finished_at": None}
 _discover_results: List[Dict[str, Any]] = []
 _router_leases: List[Dict[str, str]] = []
-
-# Remote agent registry (for your own devices only)
-# agent_id -> metadata (and current socket sid)
-_agents: Dict[str, Dict[str, Any]] = {}
-
-# Agent pairing + tokens (safer than shared keys)
-AGENT_STATE_FILE = (Path(__file__).resolve().parent / "agents_state.json")
-_agent_tokens: Dict[str, Dict[str, Any]] = {}  # token -> {agent_id, created_at, last_seen}
-_pairings: Dict[str, Dict[str, Any]] = {}  # code -> {expires_at, created_at}
-
 
 def _which(cmd: str) -> Optional[str]:
     return shutil.which(cmd)
@@ -108,62 +96,36 @@ def _run_command(args: List[str], timeout_s: int = 15) -> Tuple[int, str]:
     except FileNotFoundError:
         return 127, f"[not found] {args[0]}\n"
 
-
-def _require_admin_api_key() -> Optional[Tuple[Response, int]]:
-    """
-    If ADMIN_API_KEY is set, require header X-API-Key to match.
-    """
-    required = os.getenv("ADMIN_API_KEY", "").strip()
-    if not required:
-        return None
-    got = (request.headers.get("X-API-Key") or "").strip()
-    if got != required:
-        return jsonify({"ok": False, "error": "Unauthorized"}), 401
-    return None
-
 def _utc_now_iso() -> str:
     return datetime.utcnow().isoformat() + "Z"
 
-
-def _load_agent_state() -> None:
-    global _agent_tokens
-    try:
-        if not AGENT_STATE_FILE.exists():
-            return
-        data = json.loads(AGENT_STATE_FILE.read_text(encoding="utf-8"))
-        tokens = data.get("tokens") or {}
-        if isinstance(tokens, dict):
-            _agent_tokens = tokens
-    except Exception:
-        # best-effort; don't crash server
-        return
+def _is_wifi_interface_name(name: str) -> bool:
+    n = (name or "").strip().lower()
+    if not n:
+        return False
+    # Exclude explicitly
+    if "ethernet" in n or n.startswith("eth") or n.startswith("en"):
+        return False
+    if "pdanet" in n:
+        return False
+    # Include common Wi-Fi markers
+    return any(k in n for k in ("wi-fi", "wifi", "wireless", "wlan")) or n.startswith("wl")
 
 
-def _save_agent_state() -> None:
-    try:
-        payload = {"tokens": _agent_tokens, "saved_at": _utc_now_iso()}
-        AGENT_STATE_FILE.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    except Exception:
-        return
-
-
-def _new_pairing_code() -> str:
-    # 6-digit numeric code
-    return "".join(secrets.choice("0123456789") for _ in range(6))
-
-
-def _new_agent_token() -> str:
-    return secrets.token_urlsafe(32)
-
-
-def _purge_expired_pairings() -> None:
-    now = time.time()
-    for code, meta in list(_pairings.items()):
-        if float(meta.get("expires_at", 0)) <= now:
-            _pairings.pop(code, None)
-
-
-_load_agent_state()
+def _windows_wifi_interface_names() -> List[str]:
+    """
+    Best-effort Wi-Fi interface names on Windows.
+    """
+    rc, out = _run_command(["netsh", "wlan", "show", "interfaces"], timeout_s=10)
+    if rc != 0:
+        return []
+    names = []
+    # Example: "    Name                   : Wi-Fi"
+    for line in out.splitlines():
+        m = re.match(r"^\s*Name\s*:\s*(.+)\s*$", line)
+        if m:
+            names.append(m.group(1).strip())
+    return names
 
 
 def _list_interfaces() -> List[Dict[str, str]]:
@@ -173,6 +135,7 @@ def _list_interfaces() -> List[Dict[str, str]]:
         rc, out = _run_command(["netsh", "interface", "show", "interface"], timeout_s=10)
         if rc != 0:
             return []
+        wifi_names = set(_windows_wifi_interface_names())
         interfaces: List[Dict[str, str]] = []
         # Typical lines:
         # Admin State    State          Type             Interface Name
@@ -183,13 +146,15 @@ def _list_interfaces() -> List[Dict[str, str]]:
                 continue
             parts = re.split(r"\s{2,}", line)
             if len(parts) >= 4:
-                interfaces.append(
-                    {
-                        "name": parts[3],
-                        "state": parts[1],
-                        "type": parts[2],
-                    }
-                )
+                name = parts[3]
+                # Keep Wi‑Fi only; exclude Ethernet/PDANet/etc.
+                if wifi_names:
+                    if name not in wifi_names:
+                        continue
+                else:
+                    if not _is_wifi_interface_name(name):
+                        continue
+                interfaces.append({"name": name, "state": parts[1], "type": parts[2]})
         return interfaces
 
     # Linux/macOS: prefer "ip link", fallback to ifconfig
@@ -204,6 +169,8 @@ def _list_interfaces() -> List[Dict[str, str]]:
             if not m:
                 continue
             name = m.group(1)
+            if not _is_wifi_interface_name(name):
+                continue
             flags = m.group(2)
             state = "UP" if "UP" in flags.split(",") else "DOWN"
             interfaces.append({"name": name, "state": state, "type": "link"})
@@ -694,31 +661,35 @@ def packet_callback(packet):
             protocol = "ICMP"
 
         payload = ""
-        is_plain_text = False
-        raw_bytes = b""
+        is_plain_text = True
         
-        # Extract L7 payload
+        # Extract L7 payload (always plain text; no base64 encoding)
         if Raw in packet:
             raw_bytes = packet[Raw].load
-            try:
-                # Try to decode as UTF-8 for "plain text"
-                payload = raw_bytes.decode('utf-8')
-                is_plain_text = True
-            except UnicodeDecodeError:
-                # If binary, we encode it as base64 so it can be sent to JSON
-                # The frontend can then decide to show it as Hex or try other decodings
-                payload = base64.b64encode(raw_bytes).decode('utf-8')
-                is_plain_text = False
+            # Always decode into readable text; replace undecodable bytes.
+            payload = raw_bytes.decode("utf-8", errors="replace")
         
+        # Correct wording/format for UI display
+        summary = packet.summary()
+        if protocol == "TCP" and TCP in packet:
+            sport = int(packet[TCP].sport)
+            dport = int(packet[TCP].dport)
+            ftp_kind = "FTP"
+            if sport == 21 or dport == 21:
+                ftp_kind = "FTP (control)"
+            elif sport == 20 or dport == 20:
+                ftp_kind = "FTP (data)"
+            summary = f"{ftp_kind} {src_ip}:{sport} -> {dst_ip}:{dport}"
+
         pkt_data = {
-            'timestamp': time.strftime('%H:%M:%S', time.localtime()),
-            'src': src_ip,
-            'dst': dst_ip,
-            'protocol': protocol,
-            'length': len(packet),
-            'payload': payload,
-            'is_plain_text': is_plain_text,
-            'summary': packet.summary()
+            "timestamp": time.strftime("%H:%M:%S", time.localtime()),
+            "src": src_ip,
+            "dst": dst_ip,
+            "protocol": protocol,
+            "length": len(packet),
+            "payload": payload,
+            "is_plain_text": is_plain_text,
+            "summary": summary,
         }
         
         socketio.emit('new_packet', pkt_data)
@@ -727,8 +698,9 @@ def packet_callback(packet):
 def start_sniffing():
     logger.info("Starting packet sniffer...")
     # store=0 prevents memory buildup
-    # filter="ip" ensures we only look at IP packets (IPv4)
-    sniff(prn=packet_callback, filter="ip", store=0)
+    # Keep only FTP control/data channels (TCP/21 and TCP/20).
+    # This keeps the UI focused on FTP connections for IP tracking.
+    sniff(prn=packet_callback, filter="tcp port 21 or tcp port 20", store=0)
 
 sniffer_thread = None
 _sniffer_started = False
@@ -763,7 +735,6 @@ def health():
             "time": _utc_now_iso(),
             "tshark_available": bool(_which("tshark")),
             "platform": platform.platform(),
-            "admin_api_key_required": bool(os.getenv("ADMIN_API_KEY", "").strip()),
         }
     )
 
@@ -846,149 +817,6 @@ def api_devices_merged_csv():
         )
     body = "\n".join(lines) + "\n"
     return Response(body, mimetype="text/csv", headers={"Content-Disposition": "attachment; filename=devices_merged.csv"})
-
-@app.route('/api/agents')
-def api_agents():
-    return jsonify(
-        {
-            "agents": [
-                {k: v for k, v in a.items() if k != "sid"}
-                for a in _agents.values()
-            ]
-        }
-    )
-
-@app.route("/api/pairing/start", methods=["POST"])
-def api_pairing_start():
-    auth = _require_admin_api_key()
-    if auth:
-        return auth
-    _purge_expired_pairings()
-    # create a unique code
-    for _ in range(20):
-        code = _new_pairing_code()
-        if code not in _pairings:
-            break
-    else:
-        return jsonify({"ok": False, "error": "Failed to allocate pairing code"}), 500
-
-    ttl_seconds = 10 * 60
-    _pairings[code] = {"created_at": _utc_now_iso(), "expires_at": time.time() + ttl_seconds}
-    return jsonify({"ok": True, "code": code, "expires_in_seconds": ttl_seconds})
-
-
-@app.route("/api/pairing/claim", methods=["POST"])
-def api_pairing_claim():
-    """
-    Agent claims a pairing code to receive a per-device token.
-    """
-    _purge_expired_pairings()
-    data = request.get_json(silent=True) or {}
-    code = str(data.get("code", "")).strip()
-    agent_id = str(data.get("agent_id", "")).strip()
-    if not code or code not in _pairings:
-        return jsonify({"ok": False, "error": "Invalid or expired pairing code"}), 400
-    if not agent_id or len(agent_id) > 64:
-        return jsonify({"ok": False, "error": "Invalid agent_id"}), 400
-
-    token = _new_agent_token()
-    _agent_tokens[token] = {"agent_id": agent_id, "created_at": _utc_now_iso(), "last_seen": _utc_now_iso()}
-    _save_agent_state()
-    # one-time code
-    _pairings.pop(code, None)
-    return jsonify({"ok": True, "token": token})
-
-
-@app.route('/api/agents/shutdown', methods=['POST'])
-def api_agents_shutdown():
-    auth = _require_admin_api_key()
-    if auth:
-        return auth
-    data = request.get_json(silent=True) or {}
-    agent_id = str(data.get("agent_id", "")).strip()
-    confirm = str(data.get("confirm", "")).strip()
-    if confirm != "SHUTDOWN":
-        return jsonify({"ok": False, "error": "Confirmation required. Set confirm=SHUTDOWN"}), 400
-    agent = _agents.get(agent_id)
-    if not agent:
-        return jsonify({"ok": False, "error": "Unknown agent_id"}), 404
-    room = f"agent:{agent_id}"
-    socketio.emit(
-        "agent_command",
-        {"command": "shutdown", "issued_at": datetime.utcnow().isoformat() + "Z"},
-        to=room,
-        namespace="/agent",
-    )
-    return jsonify({"ok": True})
-
-
-@socketio.on("connect", namespace="/agent")
-def agent_connect():
-    # Agent must register after connect
-    emit("agent_status", {"msg": "connected", "time": datetime.utcnow().isoformat() + "Z"})
-
-
-@socketio.on("disconnect", namespace="/agent")
-def agent_disconnect():
-    sid = request.sid
-    # remove sid from any agent
-    for agent_id, meta in list(_agents.items()):
-        if meta.get("sid") == sid:
-            meta["online"] = False
-            meta["last_seen"] = _utc_now_iso()
-            meta.pop("sid", None)
-            break
-
-
-@socketio.on("register", namespace="/agent")
-def agent_register(data):
-    """
-    Agent registration:
-    - If AGENT_SHARED_KEY is set on the server: require it (legacy mode).
-    - Otherwise require a per-device token obtained via pairing code.
-    """
-    required = os.getenv("AGENT_SHARED_KEY", "").strip()
-    provided = str((data or {}).get("shared_key", "")).strip()
-    if required and provided != required:
-        emit("agent_status", {"msg": "unauthorized"})
-        return
-
-    if not required:
-        token = str((data or {}).get("token", "")).strip()
-        if not token or token not in _agent_tokens:
-            emit("agent_status", {"msg": "unauthorized", "detail": "missing_or_invalid_token"})
-            return
-
-    agent_id = str((data or {}).get("agent_id", "")).strip()
-    if not agent_id or len(agent_id) > 64:
-        emit("agent_status", {"msg": "invalid_agent_id"})
-        return
-
-    if not required:
-        tok_agent_id = str((_agent_tokens.get(token) or {}).get("agent_id", "")).strip()
-        if tok_agent_id != agent_id:
-            emit("agent_status", {"msg": "unauthorized", "detail": "token_agent_mismatch"})
-            return
-        _agent_tokens[token]["last_seen"] = _utc_now_iso()
-        _save_agent_state()
-
-    meta = {
-        "agent_id": agent_id,
-        "hostname": str((data or {}).get("hostname", "")).strip(),
-        "platform": str((data or {}).get("platform", "")).strip(),
-        "local_ips": (data or {}).get("local_ips") or [],
-        "online": True,
-        "last_seen": _utc_now_iso(),
-        "sid": request.sid,
-    }
-    _agents[agent_id] = meta
-    # join room for targeted commands
-    try:
-        from flask_socketio import join_room
-        join_room(f"agent:{agent_id}")
-    except Exception:
-        pass
-    emit("agent_status", {"msg": "registered", "agent_id": agent_id})
 
 @app.route('/api/discover/start', methods=['POST'])
 def api_discover_start():

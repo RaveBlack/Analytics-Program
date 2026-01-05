@@ -20,12 +20,12 @@
 <body>
 
 <div class="container-fluid mt-3">
-    <h3><span class="badge bg-primary">L7</span> Traffic Monitor</h3>
+    <h3><span class="badge bg-primary">L7</span> Traffic Monitor <span class="badge bg-secondary">FTP Only</span></h3>
     
     <!-- Tools Panel -->
     <div class="card mb-3">
         <div class="card-header d-flex justify-content-between align-items-center">
-            <span>Tools (permissioned diagnostics + Wireshark CLI)</span>
+            <span>Tools (Wi‑Fi only • permissioned diagnostics + Wireshark CLI)</span>
             <span class="text-muted small" id="healthMsg">Checking capabilities...</span>
         </div>
         <div class="card-body">
@@ -132,29 +132,6 @@
                     </div>
                 </div>
             </div>
-
-            <div class="row g-3 mt-1">
-                <div class="col-lg-4">
-                    <label class="form-label mb-1">Remote control (your devices)</label>
-                    <div class="d-flex gap-2 align-items-center">
-                        <input class="form-control form-control-sm" id="adminKey" placeholder="Admin API key (optional)">
-                        <button class="btn btn-sm btn-outline-secondary" onclick="saveAdminKey()">Save</button>
-                        <button class="btn btn-sm btn-outline-primary" onclick="refreshAgents()">Refresh</button>
-                    </div>
-                    <div class="d-flex gap-2 mt-2">
-                        <button class="btn btn-sm btn-outline-success" onclick="createPairingCode()">Create pairing code</button>
-                        <span class="text-muted small" id="pairingBox">(no code)</span>
-                    </div>
-                    <div class="form-text">Run <code>agent.py</code> on Windows/macOS with <code>PAIR_CODE</code> once to pair (token is saved locally).</div>
-                </div>
-                <div class="col-lg-8">
-                    <label class="form-label mb-1">Agents</label>
-                    <div class="border rounded p-2 bg-light" style="height: 180px; overflow:auto; font-family: monospace; font-size: 0.85em;" id="agentsBox">
-                        (no agents yet)
-                    </div>
-                    <div class="form-text">Shutdown is only executed if the agent is started with <code>ENABLE_SHUTDOWN=1</code>.</div>
-                </div>
-            </div>
         </div>
     </div>
 
@@ -196,9 +173,7 @@
         <div class="card-header d-flex justify-content-between align-items-center">
             <span>Packet Payload (L7)</span>
             <div class="btn-group btn-group-sm">
-                <button class="btn btn-outline-secondary active" onclick="setView('text')">Plain Text</button>
-                <button class="btn btn-outline-secondary" onclick="setView('hex')">Hex Dump</button>
-                <button class="btn btn-outline-secondary" onclick="setView('base64')">Base64</button>
+                <button class="btn btn-outline-secondary active" onclick="setView(event, 'text')">Plain Text</button>
             </div>
         </div>
         <div class="card-body p-0">
@@ -277,50 +252,14 @@
             return;
         }
 
-        let content = "";
-        
-        // If it was plain text on backend, payload is string.
-        // If it was binary, payload is base64 string.
-        
-        if (currentView === 'text') {
-            if (selectedPacket.is_plain_text) {
-                content = selectedPacket.payload;
-            } else {
-                // Try to decode base64 to text, showing placeholder if binary
-                try {
-                    content = atob(selectedPacket.payload);
-                } catch (e) {
-                    content = "[Binary Data - Switch to Hex View]";
-                }
-            }
-        } else if (currentView === 'base64') {
-            if (selectedPacket.is_plain_text) {
-                content = btoa(selectedPacket.payload);
-            } else {
-                content = selectedPacket.payload;
-            }
-        } else if (currentView === 'hex') {
-            // Convert to hex
-            let rawStr = selectedPacket.is_plain_text ? selectedPacket.payload : atob(selectedPacket.payload);
-            content = stringToHex(rawStr);
-        }
-
-        container.innerText = content;
+        // Backend always sends plain text (UTF‑8 with replacement for undecodable bytes).
+        container.innerText = selectedPacket.payload;
     }
 
-    function stringToHex(str) {
-        let hex = '';
-        for(let i=0;i<str.length;i++) {
-            hex += ''+str.charCodeAt(i).toString(16).padStart(2, '0') + ' ';
-        }
-        return hex.toUpperCase();
-    }
-
-    function setView(view) {
-        currentView = view;
-        // Update button states
+    function setView(e, view) {
+        currentView = 'text';
         document.querySelectorAll('.btn-group button').forEach(b => b.classList.remove('active'));
-        event.target.classList.add('active');
+        if (e && e.target) e.target.classList.add('active');
         renderDetail();
     }
 
@@ -357,22 +296,8 @@
         document.getElementById('cmdOut').textContent = text || '';
     }
 
-    function getAdminKey() {
-        return localStorage.getItem('admin_api_key') || '';
-    }
-
-    function saveAdminKey() {
-        const val = (document.getElementById('adminKey').value || '').trim();
-        if (val) localStorage.setItem('admin_api_key', val);
-        else localStorage.removeItem('admin_api_key');
-    }
-
     async function fetchJson(url, options) {
-        const opt = options || {};
-        opt.headers = opt.headers || {};
-        const key = getAdminKey();
-        if (key) opt.headers['X-API-Key'] = key;
-        const res = await fetch(url, opt);
+        const res = await fetch(url, options);
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
             const msg = data && data.error ? data.error : `Request failed (${res.status})`;
@@ -385,38 +310,14 @@
         try {
             const health = await fetchJson('/api/health');
             document.getElementById('healthMsg').textContent =
-                `tshark: ${health.tshark_available ? 'available' : 'missing'} • ${health.platform}` +
-                (health.admin_api_key_required ? ' • admin key required' : '');
+                `tshark: ${health.tshark_available ? 'available' : 'missing'} • ${health.platform}`;
         } catch (e) {
             document.getElementById('healthMsg').textContent = 'Health check failed';
         }
 
-        // preload admin key if present
-        const k = getAdminKey();
-        const input = document.getElementById('adminKey');
-        if (input) input.value = k;
-
         await refreshInterfaces();
         await refreshDevices();
         await refreshCaptures();
-        await refreshAgents();
-    }
-
-    async function createPairingCode() {
-        const el = document.getElementById('pairingBox');
-        if (el) el.textContent = 'creating...';
-        try {
-            const data = await fetchJson('/api/pairing/start', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: '{}'
-            });
-            if (el) el.textContent = `PAIR_CODE=${data.code} (expires ~${Math.round((data.expires_in_seconds || 0) / 60)} min)`;
-            setCmdOut(`Pairing code created: ${data.code}\nRun agent with PAIR_CODE=${data.code} once to enroll.`);
-        } catch (e) {
-            if (el) el.textContent = `error: ${e.message}`;
-            setCmdOut(`Error: ${e.message}`);
-        }
     }
 
     async function refreshInterfaces() {
@@ -638,53 +539,6 @@
                 .join('\n');
         } catch (e) {
             box.textContent = `Error: ${e.message}`;
-        }
-    }
-
-    function renderAgents(agents) {
-        const box = document.getElementById('agentsBox');
-        if (!box) return;
-        if (!agents || !agents.length) {
-            box.textContent = '(no agents yet)';
-            return;
-        }
-        box.innerHTML = '';
-        for (const a of agents) {
-            const line = document.createElement('div');
-            const status = a.online ? 'ONLINE' : 'offline';
-            const ips = Array.isArray(a.local_ips) ? a.local_ips.join(',') : '';
-            line.textContent = `${a.agent_id}\t${status}\t${a.hostname || ''}\t${a.platform || ''}\t${ips}\tlast=${a.last_seen || ''}\t`;
-
-            const btn = document.createElement('button');
-            btn.className = 'btn btn-sm btn-outline-danger ms-2';
-            btn.textContent = 'Shutdown';
-            btn.onclick = async () => {
-                const ok = prompt(`Type SHUTDOWN to power off ${a.agent_id}:`);
-                if (ok !== 'SHUTDOWN') return;
-                try {
-                    await fetchJson('/api/agents/shutdown', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ agent_id: a.agent_id, confirm: 'SHUTDOWN' })
-                    });
-                    setCmdOut(`Shutdown command sent to agent: ${a.agent_id}`);
-                } catch (e) {
-                    setCmdOut(`Error: ${e.message}`);
-                }
-            };
-            line.appendChild(btn);
-            box.appendChild(line);
-        }
-    }
-
-    async function refreshAgents() {
-        const box = document.getElementById('agentsBox');
-        if (box) box.textContent = 'Loading agents...';
-        try {
-            const data = await fetchJson('/api/agents');
-            renderAgents(data.agents || []);
-        } catch (e) {
-            if (box) box.textContent = `Error: ${e.message}`;
         }
     }
 
