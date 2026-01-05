@@ -253,6 +253,138 @@ def save_history(path: str, data: dict) -> None:
     os.replace(tmp, path)
 
 
+def _require_cmd(cmd: str) -> str:
+    path = shutil.which(cmd)
+    if not path:
+        raise RuntimeError(f"`{cmd}` not found on PATH")
+    return path
+
+
+def run_iperf(
+    *,
+    server: str,
+    iface: str,
+    port: int = 5201,
+    protocol: str = "tcp",  # tcp|udp
+    duration_s: int = 10,
+    bytes_to_send: Optional[str] = None,  # iperf3 -n format, e.g. 500M, 2G
+    udp_bandwidth_mbps: float = 50.0,  # used only for UDP (-b)
+    parallel: int = 1,
+    reverse: bool = False,
+    history_path: str = HISTORY_FILE_DEFAULT,
+) -> int:
+    """
+    Run an iperf3 client test against a server you control / have permission to test.
+
+    Notes:
+    - TCP is "reliable" (retransmits/correction); UDP is not.
+    - For UDP, we default-rate-limit to 50 Mbps unless overridden.
+    """
+    iperf3 = _require_cmd("iperf3")
+    if protocol not in {"tcp", "udp"}:
+        raise ValueError("protocol must be tcp or udp")
+
+    # Measure interface usage while iperf runs.
+    rx0, tx0 = read_netdev_bytes_linux(iface)
+    start_ts = _now_s()
+    last = NetDevSample(ts=start_ts, rx_bytes=rx0, tx_bytes=tx0)
+    max_rx_mbps = 0.0
+    max_tx_mbps = 0.0
+
+    cmd = [iperf3, "-c", server, "-p", str(port), "-t", str(max(1, int(duration_s))), "-i", "1"]
+    if parallel and parallel > 1:
+        cmd += ["-P", str(parallel)]
+    if reverse:
+        cmd += ["-R"]
+    if bytes_to_send:
+        # iperf3 accepts suffixes like K/M/G, e.g. 500M
+        cmd += ["-n", bytes_to_send]
+    if protocol == "udp":
+        cmd += ["-u", "-b", f"{udp_bandwidth_mbps}M"]
+
+    print(
+        "iperf3 mode (use ONLY with permission): "
+        f"server={server} port={port} proto={protocol} "
+        f"duration={duration_s}s bytes={bytes_to_send or 'n/a'} "
+        f"udp_rate={udp_bandwidth_mbps if protocol=='udp' else 'n/a'}Mbps "
+        f"parallel={parallel} reverse={reverse} iface={iface}",
+        flush=True,
+    )
+    print("Press Ctrl+C to stop.\n", flush=True)
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+
+    output_lines: list[str] = []
+    try:
+        while proc.poll() is None:
+            time.sleep(1.0)
+            ts = _now_s()
+            rx, tx = read_netdev_bytes_linux(iface)
+            dt = max(0.001, ts - last.ts)
+            rx_mbps = ((rx - last.rx_bytes) * 8.0) / dt / 1_000_000.0
+            tx_mbps = ((tx - last.tx_bytes) * 8.0) / dt / 1_000_000.0
+            max_rx_mbps = max(max_rx_mbps, rx_mbps)
+            max_tx_mbps = max(max_tx_mbps, tx_mbps)
+            last = NetDevSample(ts=ts, rx_bytes=rx, tx_bytes=tx)
+            uptime = int(ts - start_ts)
+            print(f"\rt+{uptime:>4}s  RX/TX(Mbps): {_fmt_mbps(rx_mbps)}/{_fmt_mbps(tx_mbps)}   ", end="", flush=True)
+
+        # Drain remaining output
+        if proc.stdout:
+            for line in proc.stdout:
+                output_lines.append(line.rstrip("\n"))
+    except KeyboardInterrupt:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        print("\nStopping...", flush=True)
+    finally:
+        try:
+            proc.wait(timeout=2.0)
+        except Exception:
+            pass
+
+    print("\n\niperf3 output:\n", flush=True)
+    if output_lines:
+        print("\n".join(output_lines[-200:]), flush=True)
+    else:
+        print("(no output captured)", flush=True)
+
+    # Save history (best-effort).
+    hist = load_history(history_path)
+    hist.setdefault("runs", []).append(
+        {
+            "timestamp": int(start_ts),
+            "mode": "iperf3",
+            "server": server,
+            "port": port,
+            "protocol": protocol,
+            "duration_s": duration_s,
+            "bytes_to_send": bytes_to_send,
+            "udp_bandwidth_mbps": udp_bandwidth_mbps if protocol == "udp" else None,
+            "parallel": parallel,
+            "reverse": reverse,
+            "iface": iface,
+            "max_iface_mbps": {"rx": round(max_rx_mbps, 2), "tx": round(max_tx_mbps, 2)},
+            "tail_output": output_lines[-50:],
+        }
+    )
+    try:
+        save_history(history_path, hist)
+        print(f"\nHistory saved to: {history_path}", flush=True)
+    except Exception:
+        print(f"\nHistory not saved (write failed): {history_path}", file=sys.stderr, flush=True)
+
+    return 0 if proc.returncode == 0 else 2
+
+
 def run_monitor(
     target: str,
     iface: str,
@@ -435,47 +567,74 @@ def interactive(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        prog="app.py",
-        description="Ping + local interface RX/TX Mbps monitor (rate-limited; not a flood tool).",
-    )
-    p.add_argument("--target", help="Target IP/hostname to ping. If omitted, runs interactive mode.")
-    p.add_argument("--iface", help="Network interface to read (e.g. wlan0, eth0). Auto-detect if omitted.")
-    p.add_argument(
+    p = argparse.ArgumentParser(prog="app.py", description="Network monitor: ping + bandwidth, plus iperf3 test mode.")
+    sub = p.add_subparsers(dest="cmd")
+
+    pingp = sub.add_parser("ping", help="Ping + interface RX/TX Mbps monitor (safe, rate-limited).")
+    pingp.add_argument("--target", help="Target IP/hostname to ping. If omitted, runs interactive mode.")
+    pingp.add_argument("--iface", help="Network interface to read (e.g. wlan0, eth0). Auto-detect if omitted.")
+    pingp.add_argument(
         "--interval",
         type=float,
         default=1.0,
         help=f"Ping interval seconds (clamped to {PING_INTERVAL_MIN_S}-{PING_INTERVAL_MAX_S}). Default: 1.0",
     )
-    p.add_argument(
+    pingp.add_argument(
         "--alert-min",
         type=float,
         default=50.0,
         help=f"Low bandwidth alert threshold Mbps (clamped to {ALERT_MIN_FLOOR_Mbps}-{ALERT_MAX_CEIL_Mbps}).",
     )
-    p.add_argument(
+    pingp.add_argument(
         "--alert-max",
         type=float,
         default=900.0,
         help=f"High bandwidth alert threshold Mbps (clamped to {ALERT_MIN_FLOOR_Mbps}-{ALERT_MAX_CEIL_Mbps}).",
     )
-    p.add_argument(
+    pingp.add_argument(
         "--history",
         default=HISTORY_FILE_DEFAULT,
         help=f"Where to save run history JSON. Default: {HISTORY_FILE_DEFAULT}",
     )
-    p.add_argument(
+    pingp.add_argument(
         "--duration",
         type=float,
         default=None,
         help="Stop automatically after N seconds (optional).",
     )
-    p.add_argument(
+    pingp.add_argument(
         "--count",
         type=int,
         default=None,
         help="Send N pings then stop (optional).",
     )
+
+    ip = sub.add_parser("iperf", help="iperf3 client mode (for servers you control / have permission to test).")
+    ip.add_argument("--server", required=True, help="iperf3 server IP/hostname (must be authorized).")
+    ip.add_argument("--port", type=int, default=5201, help="iperf3 server port (default 5201).")
+    ip.add_argument("--iface", help="Interface to read for RX/TX Mbps during test. Auto-detect if omitted.")
+    ip.add_argument("--protocol", choices=["tcp", "udp"], default="tcp", help="tcp=reliable, udp=unreliable.")
+    ip.add_argument("--duration", type=int, default=10, help="Test duration seconds (default 10).")
+    ip.add_argument(
+        "--bytes",
+        dest="bytes_to_send",
+        default=None,
+        help="Total bytes to send (iperf3 -n), e.g. 500M, 2G (optional).",
+    )
+    ip.add_argument(
+        "--udp-rate-mbps",
+        type=float,
+        default=50.0,
+        help="UDP send rate cap in Mbps (only for --protocol udp). Default 50.",
+    )
+    ip.add_argument("--parallel", type=int, default=1, help="Parallel streams (-P). Default 1.")
+    ip.add_argument("--reverse", action="store_true", help="Reverse mode (-R): server sends to you.")
+    ip.add_argument(
+        "--history",
+        default=HISTORY_FILE_DEFAULT,
+        help=f"Where to save run history JSON. Default: {HISTORY_FILE_DEFAULT}",
+    )
+
     return p
 
 
@@ -483,8 +642,37 @@ def main(argv: list[str]) -> int:
     p = build_parser()
     args = p.parse_args(argv)
 
-    # Basic protection against misuse: we won't accept extra ping arguments.
-    # (If you need more, we can add safe options like count/timeout.)
+    if not args.cmd:
+        # Backward compatible behavior: no subcommand => ping interactive.
+        args.cmd = "ping"
+
+    if args.cmd == "iperf":
+        iface = args.iface or get_default_interface_linux()
+        if not iface:
+            ifaces = list_interfaces_linux()
+            iface = next((i for i in ifaces if i != "lo"), None) or (ifaces[0] if ifaces else None)
+        if not iface:
+            print("Could not detect a network interface. Provide --iface.", file=sys.stderr)
+            return 2
+        try:
+            return run_iperf(
+                server=args.server,
+                iface=iface,
+                port=args.port,
+                protocol=args.protocol,
+                duration_s=args.duration,
+                bytes_to_send=args.bytes_to_send,
+                udp_bandwidth_mbps=args.udp_rate_mbps,
+                parallel=args.parallel,
+                reverse=args.reverse,
+                history_path=args.history,
+            )
+        except RuntimeError as e:
+            print(str(e), file=sys.stderr)
+            print("Install iperf3 then retry (e.g. Debian/Ubuntu: `sudo apt-get install iperf3`).", file=sys.stderr)
+            return 2
+
+    # ping mode
     if args.target is None:
         return interactive(args)
 
