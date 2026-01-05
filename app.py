@@ -181,7 +181,8 @@ def cmd_all(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="app.py", description="Workspace launcher")
-    sub = p.add_subparsers(dest="command", required=True)
+    # If no command is provided, we'll print help (see main()).
+    sub = p.add_subparsers(dest="command", required=False)
 
     gov = sub.add_parser("govcode-ai", help="Run GovCode AI (Next.js) app")
     gov.add_argument("action", choices=["dev", "build", "start", "lint"])
@@ -204,7 +205,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
-    args = build_parser().parse_args(list(argv) if argv is not None else None)
+    parser = build_parser()
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    if not getattr(args, "command", None):
+        parser.print_help(sys.stdout)
+        return 0
     args.func(args)
     return 0
 
