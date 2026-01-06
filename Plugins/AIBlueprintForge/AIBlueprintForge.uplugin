@@ -1,0 +1,24 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "AI Blueprint Forge",
+  "Description": "Editor tool that turns AI prompts into generated Blueprint assets (OpenAI-compatible HTTP endpoint).",
+  "Category": "AI",
+  "CreatedBy": "RaveBlack",
+  "CreatedByURL": "",
+  "DocsURL": "",
+  "MarketplaceURL": "",
+  "SupportURL": "",
+  "CanContainContent": false,
+  "IsBetaVersion": true,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "AIBlueprintForge",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    }
+  ]
+}
+
