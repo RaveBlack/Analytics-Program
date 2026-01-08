@@ -1,0 +1,7 @@
+{
+  "sample_interval_s": 0.1,
+  "deadzone": 0.12,
+  "curve_gamma": 1.6,
+  "smoothing_alpha": 0.35,
+  "csv_log_path": "controller_log.csv"
+}
