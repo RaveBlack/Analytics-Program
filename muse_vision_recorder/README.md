@@ -114,6 +114,22 @@ One-command PowerShell build:
 powershell -ExecutionPolicy Bypass -File muse_vision_recorder\build_windows_pyinstaller.ps1
 ```
 
+### If you hit `PermissionError: [WinError 5] Access is denied` while building
+
+This is almost always caused by:
+
+- Building inside a **OneDrive**/sync folder (files get locked by sync/AV)
+- The previously built EXE (or `dist/` output) is still **running**
+- Antivirus scanning the `dist/` folder during build
+
+Fix:
+
+- Close the EXE if it’s running (Task Manager → end task)
+- Pause OneDrive sync temporarily (or move the project to a non-OneDrive folder like `C:\code\...`)
+- Delete `dist/` and `build/` folders, then rebuild
+
+The included PowerShell build script already builds into `%LOCALAPPDATA%\MuseVisionRecorderBuild` to avoid OneDrive locks.
+
 If it “crashes instantly”, rebuild once with `console=True` in `muse_vision_recorder/pyinstaller.spec` to see logs.
 
 ### Optional: py2exe (if you specifically need it)
