@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import threading
 import time
 from collections import deque
@@ -245,7 +246,25 @@ def main() -> None:
         help="Run with Tkinter GUI (default) or headless console mode.",
     )
     args = parser.parse_args()
-    App(mode=args.mode).run()
+    try:
+        App(mode=args.mode).run()
+    except Exception as e:
+        # If this is a Windows GUI build (console=False), exceptions can look like "instant crash".
+        # Show a dialog when possible, otherwise print.
+        if args.mode == "gui":
+            try:
+                import tkinter as tk
+                from tkinter import messagebox
+
+                root = tk.Tk()
+                root.withdraw()
+                messagebox.showerror("MuseVisionRecorder error", str(e))
+                root.destroy()
+                return
+            except Exception:
+                pass
+        print(f"Fatal error: {e}", file=sys.stderr, flush=True)
+        raise
 
 
 if __name__ == "__main__":

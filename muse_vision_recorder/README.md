@@ -44,6 +44,12 @@ source .venv/bin/activate
 pip install -r muse_vision_recorder/requirements.txt
 ```
 
+Or auto-install + run (source only):
+
+```bash
+python3 muse_vision_recorder/run_bootstrap.py
+```
+
 ### Linux note (GUI)
 
 The default GUI uses **Tkinter**. On some Linux distros you must install it separately (example):
@@ -90,16 +96,25 @@ Each session writes:
 
 Build on **Windows** (PyInstaller does not cross-compile cleanly from Linux → Windows):
 
+Use the provided spec (bundles `pylsl` / `liblsl` correctly, and includes lazy tkinter imports):
+
 ```bat
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r muse_vision_recorder\requirements.txt
 pip install pyinstaller
-
-pyinstaller --noconsole --onefile muse_vision_recorder\app.py --name MuseVisionRecorder
+pyinstaller --clean muse_vision_recorder\pyinstaller.spec
 ```
 
-The EXE will be in `dist\MuseVisionRecorder.exe`.
+Output will be in `dist\MuseVisionRecorder\MuseVisionRecorder.exe`.
+
+One-command PowerShell build:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File muse_vision_recorder\build_windows_pyinstaller.ps1
+```
+
+If it “crashes instantly”, rebuild once with `console=True` in `muse_vision_recorder/pyinstaller.spec` to see logs.
 
 ### Optional: py2exe (if you specifically need it)
 
